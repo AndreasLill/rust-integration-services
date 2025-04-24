@@ -1,0 +1,11 @@
+[package]
+name = "rust-integration-services"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+url = "2"
+rustls = "0.23.26"
+webpki-roots = "0.26.8"
+tokio = { version = "1.44.2", features = ["full", "test-util"] }
+tokio-rustls = "0.26.2"
