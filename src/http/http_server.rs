@@ -32,7 +32,7 @@ impl HttpServer {
         T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
-        self.routes.insert(format!("{}|{}", method, route), Arc::new(move |req| Box::pin(callback(req))));
+        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |req| Box::pin(callback(req))));
         self
     }
 
@@ -48,7 +48,7 @@ impl HttpServer {
             }
         };
 
-        self.routes.insert(format!("{}|{}", method, route), Arc::new(move |req| Box::pin(callback(req))));
+        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |req| Box::pin(callback(req))));
         self
     }
 
