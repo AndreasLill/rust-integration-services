@@ -15,7 +15,7 @@ type HttpResponseHandler = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Ht
 pub struct HttpServer {
     pub ip: String,
     pub port: i32,
-    pub routes: HashMap<String, Arc<HttpResponseHandler>>
+    routes: HashMap<String, Arc<HttpResponseHandler>>
 }
 
 impl HttpServer {
@@ -41,8 +41,8 @@ impl HttpServer {
         let callback = move |request| {
             let url_cloned = url_parsed.clone();
             async move {
-                HttpClient::new(url_cloned, request)
-                .send()
+                HttpClient::new(url_cloned)
+                .send(request)
                 .await
                 .unwrap()
             }

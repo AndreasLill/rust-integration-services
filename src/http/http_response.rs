@@ -1,52 +1,61 @@
 use std::{collections::HashMap, io::Error};
 
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, BufReader}, net::TcpStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
     pub protocol: String,
-    pub status: String,
+    pub status_code: u16,
+    pub status_text: String,
     pub headers: HashMap<String, String>,
     pub body: String,
 }
 
 #[allow(dead_code)]
 impl HttpResponse {
-    pub fn ok() -> Self {
+    fn new() -> Self {
         HttpResponse {
             protocol: String::from("HTTP/1.1"),
-            status: String::from("200 OK"),
+            status_code: 0,
+            status_text: String::new(),
             headers: HashMap::new(),
             body: String::new(),
         }
+    }
+    
+    fn status(mut self, code: u16, text: &str) -> Self {
+        self.status_code = code;
+        self.status_text = text.to_string();
+        self
+    }
+
+    pub fn ok() -> Self {
+        HttpResponse::new().status(200, "OK")
     }
 
     pub fn found() -> Self {
-        HttpResponse {
-            protocol: String::from("HTTP/1.1"),
-            status: String::from("302 Found"),
-            headers: HashMap::new(),
-            body: String::new(),
-        }
+        HttpResponse::new().status(302, "Found")
+    }
+
+    pub fn bad_request() -> Self {
+        HttpResponse::new().status(400, "Bad Request")
+    }
+
+    pub fn unauthorized() -> Self {
+        HttpResponse::new().status(401, "Unauthorized")
+    }
+
+    pub fn forbidden() -> Self {
+        HttpResponse::new().status(403, "Forbidden")
     }
 
     pub fn not_found() -> Self {
-        HttpResponse {
-            protocol: String::from("HTTP/1.1"),
-            status: String::from("404 Not Found"),
-            headers: HashMap::new(),
-            body: String::new(),
-        }
+        HttpResponse::new().status(404, "Not Found")
     }
 
     pub fn internal_server_error() -> Self {
-        HttpResponse {
-            protocol: String::from("HTTP/1.1"),
-            status: String::from("500 Internal Server Error"),
-            headers: HashMap::new(),
-            body: String::new(),
-        }
+        HttpResponse::new().status(500, "Internal Server Error")
     }
 
     pub fn body(mut self, body: &str) -> Self {
@@ -61,7 +70,7 @@ impl HttpResponse {
     }
 
     pub fn to_string(&self) -> String {
-        let first_line_str = format!("{} {}", self.protocol, self.status);
+        let first_line_str = format!("{} {} {}", self.protocol, self.status_code, self.status_text);
         let mut headers_str = String::new();
 
         for (key, value) in &self.headers {
@@ -71,15 +80,15 @@ impl HttpResponse {
         format!("{}\r\n{}\r\n{}", first_line_str, headers_str, self.body)
     }
 
-    pub async fn from_stream(stream: &mut TcpStream) -> Result<HttpResponse, Error> {
+    pub async fn from_stream<S: AsyncRead + Unpin>(stream: &mut S) -> Result<HttpResponse, Error> {
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
 
         reader.read_line(&mut buffer).await?;
         let first_line: Vec<&str> = buffer.split_whitespace().collect();
-        let protocol = first_line[0];
-        let code = first_line[1];
-        let reason = first_line[2];
+        let protocol = first_line[0].to_string();
+        let status_code = first_line[1].to_string().parse().unwrap();
+        let status_text = first_line[2].to_string();
 
         let mut header = String::new();
         let mut headers: HashMap<String, String> = HashMap::new();
@@ -105,10 +114,11 @@ impl HttpResponse {
         }
 
         Ok(HttpResponse {
-            protocol: String::from(protocol),
-            status: String::from(format!("{} {}", code, reason)),
-            headers: headers,
-            body: body
+            protocol,
+            status_code,
+            status_text,
+            headers,
+            body
         })
     }
 }
