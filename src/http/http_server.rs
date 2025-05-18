@@ -16,7 +16,6 @@ type HttpResponseHandler = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Ht
 
 #[derive(Clone)]
 pub enum HttpServerSignal {
-    Status,
     Shutdown,
 }
 
@@ -28,10 +27,6 @@ pub struct HttpServerChannel {
 impl HttpServerChannel {
     pub async fn shutdown(&self) {
         let _ = self.sender.send(HttpServerSignal::Shutdown).await;
-    }
-
-    pub async fn status(&self) {
-        let _ = self.sender.send(HttpServerSignal::Status).await;
     }
 }
 
@@ -86,6 +81,7 @@ impl HttpServer {
     pub async fn start(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
+        println!("HTTP server running on {}", &addr);
 
         let routes = Arc::new(self.routes.clone());
         let mut join_set = JoinSet::new();
@@ -94,11 +90,8 @@ impl HttpServer {
             tokio::select! {
                 channel_signal = self.channel_receiver.recv() => {
                     match channel_signal {
-                        Some(HttpServerSignal::Status) => {
-                            println!("HTTP server running on {}:{}", self.ip, self.port);
-                        }
                         Some(HttpServerSignal::Shutdown) => {
-                            println!("HTTP server shutdown signal received.");
+                            println!("HTTP server is shutting down.");
                             break;
                         }
                         None => {}

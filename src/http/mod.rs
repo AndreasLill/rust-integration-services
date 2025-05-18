@@ -35,8 +35,6 @@ mod test {
         assert_eq!(response.body, "Text");
 
         tokio::time::advance(Duration::from_millis(100)).await;
-        server_channel.status().await;
-        tokio::time::advance(Duration::from_millis(100)).await;
         server_channel.shutdown().await;
         assert!(handle.await.is_ok());
     }
