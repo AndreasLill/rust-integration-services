@@ -20,13 +20,13 @@ pub enum HttpServerSignal {
 }
 
 #[derive(Clone)]
-pub struct HttpServerChannel {
-    sender: mpsc::Sender<HttpServerSignal>
+pub struct HttpServerEventChannelSender {
+    event_sender: mpsc::Sender<HttpServerSignal>
 }
 
-impl HttpServerChannel {
+impl HttpServerEventChannelSender {
     pub async fn shutdown(&self) {
-        let _ = self.sender.send(HttpServerSignal::Shutdown).await;
+        let _ = self.event_sender.send(HttpServerSignal::Shutdown).await;
     }
 }
 
@@ -34,22 +34,22 @@ pub struct HttpServer {
     pub ip: String,
     pub port: i32,
     routes: HashMap<String, Arc<HttpResponseHandler>>,
-    channel_sender: HttpServerChannel,
-    channel_receiver: mpsc::Receiver<HttpServerSignal>,
+    event_channel_sender: HttpServerEventChannelSender,
+    event_channel_receiver: mpsc::Receiver<HttpServerSignal>,
 }
 
 impl HttpServer {
     pub fn new(ip: &str, port: i32) -> Self {
-        let (sender, channel_receiver) = mpsc::channel::<HttpServerSignal>(16);
-        let channel_sender = HttpServerChannel {
-            sender,
+        let (event_sender, event_channel_receiver) = mpsc::channel::<HttpServerSignal>(16);
+        let event_channel_sender = HttpServerEventChannelSender {
+            event_sender,
         };
         HttpServer {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
-            channel_sender,
-            channel_receiver
+            event_channel_sender,
+            event_channel_receiver,
         }
     }
 
@@ -88,8 +88,8 @@ impl HttpServer {
 
         loop {
             tokio::select! {
-                channel_signal = self.channel_receiver.recv() => {
-                    match channel_signal {
+                event_channel_signal = self.event_channel_receiver.recv() => {
+                    match event_channel_signal {
                         Some(HttpServerSignal::Shutdown) => {
                             println!("HTTP server is shutting down.");
                             break;
@@ -130,8 +130,8 @@ impl HttpServer {
         println!("HTTP server shutdown complete.");
     }
 
-    pub fn get_channel(&self) -> HttpServerChannel {
-        self.channel_sender.clone()
+    pub fn get_event_channel(&self) -> HttpServerEventChannelSender {
+        self.event_channel_sender.clone()
     }
     
     async fn write_response(stream: &mut TcpStream, mut response: HttpResponse) {

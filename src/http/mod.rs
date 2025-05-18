@@ -23,7 +23,7 @@ mod test {
             .route("GET", "/", |_req| async {
                 HttpResponse::ok().body("Text")
             });
-        let server_channel = server.get_channel();
+        let server_event_channel = server.get_event_channel();
 
         let handle = tokio::spawn(async move {
             server.start().await;
@@ -35,7 +35,7 @@ mod test {
         assert_eq!(response.body, "Text");
 
         tokio::time::advance(Duration::from_millis(100)).await;
-        server_channel.shutdown().await;
+        server_event_channel.shutdown().await;
         assert!(handle.await.is_ok());
     }
 }
