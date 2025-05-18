@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::sync::watch;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use url::Url;
 
@@ -16,19 +16,22 @@ type HttpResponseHandler = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Ht
 
 #[derive(Clone)]
 pub enum HttpServerSignal {
-    Running,
+    Status,
     Shutdown,
 }
 
 #[derive(Clone)]
 pub struct HttpServerChannel {
-    channel_send: watch::Sender<HttpServerSignal>,
-    channel_receive: watch::Receiver<HttpServerSignal>,
+    sender: mpsc::Sender<HttpServerSignal>
 }
 
 impl HttpServerChannel {
-    pub fn shutdown(&self) {
-        let _ = self.channel_send.send(HttpServerSignal::Shutdown);
+    pub async fn shutdown(&self) {
+        let _ = self.sender.send(HttpServerSignal::Shutdown).await;
+    }
+
+    pub async fn status(&self) {
+        let _ = self.sender.send(HttpServerSignal::Status).await;
     }
 }
 
@@ -36,21 +39,22 @@ pub struct HttpServer {
     pub ip: String,
     pub port: i32,
     routes: HashMap<String, Arc<HttpResponseHandler>>,
-    channel: HttpServerChannel
+    channel_sender: HttpServerChannel,
+    channel_receiver: mpsc::Receiver<HttpServerSignal>,
 }
 
 impl HttpServer {
     pub fn new(ip: &str, port: i32) -> Self {
-        let (channel_send, channel_receive) = watch::channel(HttpServerSignal::Running);
-        let channel = HttpServerChannel {
-            channel_send,
-            channel_receive,
+        let (sender, channel_receiver) = mpsc::channel::<HttpServerSignal>(16);
+        let channel_sender = HttpServerChannel {
+            sender,
         };
         HttpServer {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
-            channel
+            channel_sender,
+            channel_receiver
         }
     }
 
@@ -82,23 +86,22 @@ impl HttpServer {
     pub async fn start(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
-        println!("HTTP server running on {}", &addr);
 
         let routes = Arc::new(self.routes.clone());
         let mut join_set = JoinSet::new();
-        let mut channel_receive = self.channel.channel_receive.clone();
 
         loop {
             tokio::select! {
-                _ = channel_receive.changed() => {
-                    match channel_receive.borrow().clone() {
-                        HttpServerSignal::Running => {
-
+                channel_signal = self.channel_receiver.recv() => {
+                    match channel_signal {
+                        Some(HttpServerSignal::Status) => {
+                            println!("HTTP server running on {}:{}", self.ip, self.port);
                         }
-                        HttpServerSignal::Shutdown => {
+                        Some(HttpServerSignal::Shutdown) => {
                             println!("HTTP server shutdown signal received.");
                             break;
                         }
+                        None => {}
                     }
                 }
                 result = listener.accept() => {
@@ -135,7 +138,7 @@ impl HttpServer {
     }
 
     pub fn get_channel(&self) -> HttpServerChannel {
-        self.channel.clone()
+        self.channel_sender.clone()
     }
     
     async fn write_response(stream: &mut TcpStream, mut response: HttpResponse) {

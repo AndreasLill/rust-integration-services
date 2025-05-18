@@ -16,36 +16,28 @@ mod test {
 
     #[tokio::test(start_paused = true)]
     async fn http_server() {
-        let handle = tokio::spawn(async move {
-            HttpServer::new("127.0.0.1", 7878)
+        let ip = "127.0.0.1";
+        let port = 7878;
+
+        let mut server = HttpServer::new(ip, port)
             .route("GET", "/", |_req| async {
                 HttpResponse::ok().body("Text")
-            })
-            .start()
-            .await;
-        });
-        tokio::time::advance(Duration::from_millis(100)).await;
-
-        let response = HttpClient::new(Url::parse("http://127.0.0.1:7878").unwrap()).send(HttpRequest::get()).await.unwrap();
-        assert_eq!(response.status_code, 200);
-        assert_eq!(response.body, "Text");
-        handle.abort();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn http_server_shutdown() {
-        let mut server = HttpServer::new("127.0.0.1", 7878)
-            .route("GET", "/", |_req| async {
-                HttpResponse::ok()
             });
-        let channel = server.get_channel();
+        let server_channel = server.get_channel();
 
         let handle = tokio::spawn(async move {
             server.start().await;
         });
-        tokio::time::advance(Duration::from_millis(100)).await;
 
-        let _ = channel.shutdown();
-        handle.await.unwrap();
+        tokio::time::advance(Duration::from_millis(100)).await;
+        let response = HttpClient::new(Url::parse(format!("http://{}:{}", ip, port).as_str()).unwrap()).send(HttpRequest::get()).await.unwrap();
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.body, "Text");
+
+        tokio::time::advance(Duration::from_millis(100)).await;
+        server_channel.status().await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        server_channel.shutdown().await;
+        assert!(handle.await.is_ok());
     }
 }
