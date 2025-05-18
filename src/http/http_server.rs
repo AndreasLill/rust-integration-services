@@ -4,6 +4,8 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
+use tokio::sync::watch;
+use tokio::task::JoinSet;
 use url::Url;
 
 use super::http_client::HttpClient;
@@ -12,18 +14,43 @@ use super::http_response::HttpResponse;
 
 type HttpResponseHandler = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync;
 
+#[derive(Clone)]
+pub enum HttpServerSignal {
+    Running,
+    Shutdown,
+}
+
+#[derive(Clone)]
+pub struct HttpServerChannel {
+    channel_send: watch::Sender<HttpServerSignal>,
+    channel_receive: watch::Receiver<HttpServerSignal>,
+}
+
+impl HttpServerChannel {
+    pub fn shutdown(&self) {
+        let _ = self.channel_send.send(HttpServerSignal::Shutdown);
+    }
+}
+
 pub struct HttpServer {
     pub ip: String,
     pub port: i32,
-    routes: HashMap<String, Arc<HttpResponseHandler>>
+    routes: HashMap<String, Arc<HttpResponseHandler>>,
+    channel: HttpServerChannel
 }
 
 impl HttpServer {
     pub fn new(ip: &str, port: i32) -> Self {
+        let (channel_send, channel_receive) = watch::channel(HttpServerSignal::Running);
+        let channel = HttpServerChannel {
+            channel_send,
+            channel_receive,
+        };
         HttpServer {
             ip: String::from(ip),
             port,
-            routes: HashMap::new()
+            routes: HashMap::new(),
+            channel
         }
     }
 
@@ -52,37 +79,63 @@ impl HttpServer {
         self
     }
 
-    pub async fn start(self) {
+    pub async fn start(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
         println!("HTTP server running on {}", &addr);
+
         let routes = Arc::new(self.routes.clone());
+        let mut join_set = JoinSet::new();
+        let mut channel_receive = self.channel.channel_receive.clone();
 
         loop {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let routes = Arc::clone(&routes);
+            tokio::select! {
+                _ = channel_receive.changed() => {
+                    match channel_receive.borrow().clone() {
+                        HttpServerSignal::Running => {
 
-            tokio::spawn(async move {
-                let request = match HttpRequest::from_stream(&mut stream).await {
-                    Ok(req) => req,
-                    Err(err) => {
-                        HttpServer::write_response(&mut stream, HttpResponse::internal_server_error().body(&err.to_string())).await;
-                        return;
-                    }
-                };
-    
-                match routes.get(&format!("{}|{}", &request.method, &request.path)) {
-                    None => {
-                        HttpServer::write_response(&mut stream, HttpResponse::not_found()).await;
-                        println!("Route not found: {} {}", request.method, request.path);
-                    },
-                    Some(callback) => {
-                        let response = callback(request).await;
-                        HttpServer::write_response(&mut stream, response).await;
+                        }
+                        HttpServerSignal::Shutdown => {
+                            println!("HTTP server shutdown signal received.");
+                            break;
+                        }
                     }
                 }
-            });
+                result = listener.accept() => {
+                    let (mut stream, _) = result.unwrap();
+                    let routes = Arc::clone(&routes);
+
+                    join_set.spawn(async move {
+                        let request = match HttpRequest::from_stream(&mut stream).await {
+                            Ok(req) => req,
+                            Err(err) => {
+                                HttpServer::write_response(&mut stream, HttpResponse::internal_server_error().body(&err.to_string())).await;
+                                return;
+                            }
+                        };
+            
+                        match routes.get(&format!("{}|{}", &request.method, &request.path)) {
+                            None => {
+                                HttpServer::write_response(&mut stream, HttpResponse::not_found()).await;
+                                println!("Route not found: {} {}", request.method, request.path);
+                            },
+                            Some(callback) => {
+                                let response = callback(request).await;
+                                HttpServer::write_response(&mut stream, response).await;
+                            }
+                        }
+                    });
+                }
+            }
         }
+
+        println!("HTTP server waiting for ongoing connections to finish...");
+        while let Some(_) = join_set.join_next().await {}
+        println!("HTTP server shutdown complete.");
+    }
+
+    pub fn get_channel(&self) -> HttpServerChannel {
+        self.channel.clone()
     }
     
     async fn write_response(stream: &mut TcpStream, mut response: HttpResponse) {

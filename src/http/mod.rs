@@ -31,4 +31,21 @@ mod test {
         assert_eq!(response.body, "Text");
         handle.abort();
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn http_server_shutdown() {
+        let mut server = HttpServer::new("127.0.0.1", 7878)
+            .route("GET", "/", |_req| async {
+                HttpResponse::ok()
+            });
+        let channel = server.get_channel();
+
+        let handle = tokio::spawn(async move {
+            server.start().await;
+        });
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        let _ = channel.shutdown();
+        handle.await.unwrap();
+    }
 }
