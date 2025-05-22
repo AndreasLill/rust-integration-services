@@ -7,7 +7,6 @@ use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
-use url::Url;
 
 use super::http_client::HttpClient;
 use super::http_request::HttpRequest;
@@ -75,11 +74,11 @@ impl HttpServer {
     }
 
     pub fn route_proxy(mut self, method: &str, route: &str, url: &str) -> Self {
-        let url_parsed = Url::parse(url).unwrap();
+        let url = url.to_string();
         let callback = move |request| {
-            let url_cloned = url_parsed.clone();
+            let url = url.clone();
             async move {
-                HttpClient::new(url_cloned)
+                HttpClient::new(&url)
                 .send(request)
                 .await
                 .unwrap()

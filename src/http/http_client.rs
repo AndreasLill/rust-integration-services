@@ -14,7 +14,8 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
-    pub fn new(url: Url) -> Self {
+    pub fn new(url: &str) -> Self {
+        let url = Url::parse(url).expect("Invalid URL!");
         HttpClient { 
             url,
         }
