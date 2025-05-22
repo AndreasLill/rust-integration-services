@@ -15,12 +15,12 @@ use super::http_response::HttpResponse;
 type HttpResponseHandler = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync;
 
 #[derive(Clone)]
-pub enum HttpServerControlSignal {
+pub enum HttpServerControl {
     Shutdown,
 }
 
 #[derive(Clone)]
-pub enum HttpServerEventSignal {
+pub enum HttpServerEvent {
     OnStart,
     OnShutdown,
     OnRequest(HttpRequest),
@@ -29,12 +29,12 @@ pub enum HttpServerEventSignal {
 
 #[derive(Clone)]
 pub struct HttpServerControlChannel {
-    control_sender: mpsc::Sender<HttpServerControlSignal>
+    control_sender: mpsc::Sender<HttpServerControl>
 }
 
 impl HttpServerControlChannel {
     pub async fn shutdown(&self) {
-        let _ = self.control_sender.send(HttpServerControlSignal::Shutdown).await;
+        let _ = self.control_sender.send(HttpServerControl::Shutdown).await;
     }
 }
 
@@ -43,22 +43,19 @@ pub struct HttpServer {
     pub port: i32,
     routes: HashMap<String, Arc<HttpResponseHandler>>,
     control_channel_sender: HttpServerControlChannel,
-    control_channel_receiver: mpsc::Receiver<HttpServerControlSignal>,
-    event_broadcast: broadcast::Sender<HttpServerEventSignal>,
+    control_channel_receiver: mpsc::Receiver<HttpServerControl>,
+    event_broadcast: broadcast::Sender<HttpServerEvent>,
 }
 
 impl HttpServer {
     pub fn new(ip: &str, port: i32) -> Self {
-        let (control_sender, control_channel_receiver) = mpsc::channel::<HttpServerControlSignal>(16);
-        let control_channel_sender = HttpServerControlChannel {
-            control_sender,
-        };
+        let (control_sender, control_channel_receiver) = mpsc::channel::<HttpServerControl>(16);
         let (event_broadcast, _) = broadcast::channel(100);
         HttpServer {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
-            control_channel_sender,
+            control_channel_sender: HttpServerControlChannel { control_sender },
             control_channel_receiver,
             event_broadcast
         }
@@ -92,7 +89,7 @@ impl HttpServer {
     pub async fn start(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
-        let _ = self.event_broadcast.send(HttpServerEventSignal::OnStart);
+        let _ = self.event_broadcast.send(HttpServerEvent::OnStart);
 
         let routes = Arc::new(self.routes.clone());
         let event_broadcast = Arc::new(self.event_broadcast.clone());
@@ -102,7 +99,7 @@ impl HttpServer {
             tokio::select! {
                 event_channel_signal = self.control_channel_receiver.recv() => {
                     match event_channel_signal {
-                        Some(HttpServerControlSignal::Shutdown) => break,
+                        Some(HttpServerControl::Shutdown) => break,
                         None => {}
                     }
                 }
@@ -120,18 +117,18 @@ impl HttpServer {
                             }
                         };
 
-                        let _ = event_broadcast.send(HttpServerEventSignal::OnRequest(request.clone()));
+                        let _ = event_broadcast.send(HttpServerEvent::OnRequest(request.clone()));
                         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
                             None => {
                                 let response = HttpResponse::not_found();
                                 HttpServer::write_response(&mut stream, response.clone()).await;
                                 println!("Route not found: {} {}", request.method, request.path);
-                                let _ = event_broadcast.send(HttpServerEventSignal::OnResponse(response.clone()));
+                                let _ = event_broadcast.send(HttpServerEvent::OnResponse(response.clone()));
                             },
                             Some(callback) => {
                                 let response = callback(request).await;
                                 HttpServer::write_response(&mut stream, response.clone()).await;
-                                let _ = event_broadcast.send(HttpServerEventSignal::OnResponse(response.clone()));
+                                let _ = event_broadcast.send(HttpServerEvent::OnResponse(response.clone()));
                             }
                         }
                     });
@@ -140,14 +137,14 @@ impl HttpServer {
         }
 
         while let Some(_) = join_set.join_next().await {}
-        let _ = self.event_broadcast.send(HttpServerEventSignal::OnShutdown);
+        let _ = self.event_broadcast.send(HttpServerEvent::OnShutdown);
     }
 
     pub fn get_control_channel(&self) -> HttpServerControlChannel {
         self.control_channel_sender.clone()
     }
 
-    pub fn get_event_broadcast(&self) -> broadcast::Receiver<HttpServerEventSignal> {
+    pub fn get_event_broadcast(&self) -> broadcast::Receiver<HttpServerEvent> {
         self.event_broadcast.subscribe()
     }
     
