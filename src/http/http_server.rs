@@ -149,12 +149,9 @@ impl HttpServer {
     }
     
     async fn write_response(stream: &mut TcpStream, mut response: HttpResponse) {
-        if response.body.is_empty() {
-            stream.write_all(response.to_string().as_bytes()).await.unwrap();
-            return;
+        if !response.body.is_empty() {
+            response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
         }
-
-        response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
         stream.write_all(response.to_string().as_bytes()).await.unwrap();
     }
 }
