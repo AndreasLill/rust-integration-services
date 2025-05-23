@@ -4,27 +4,21 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc;
 use tokio::task::JoinSet;
+use tokio::sync::mpsc;
 
-use super::http_client::HttpClient;
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
-type HttpResponseHandler = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync;
+type RouteCallback = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync;
+type OnStartCallback = dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
+type OnShutdownCallback = dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
+type OnRequestCallback = dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
+type OnResponseCallback = dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
 
 #[derive(Clone)]
 pub enum HttpServerControl {
     Shutdown,
-}
-
-#[derive(Clone)]
-pub enum HttpServerEvent {
-    OnStart,
-    OnShutdown,
-    OnRequest(HttpRequest),
-    OnResponse(HttpResponse),
 }
 
 #[derive(Clone)]
@@ -41,24 +35,65 @@ impl HttpServerControlChannel {
 pub struct HttpServer {
     pub ip: String,
     pub port: i32,
-    routes: HashMap<String, Arc<HttpResponseHandler>>,
+    routes: HashMap<String, Arc<RouteCallback>>,
     control_channel_sender: HttpServerControlChannel,
     control_channel_receiver: mpsc::Receiver<HttpServerControl>,
-    event_broadcast: broadcast::Sender<HttpServerEvent>,
+    on_start: Arc<OnStartCallback>,
+    on_shutdown: Arc<OnShutdownCallback>,
+    on_request: Arc<OnRequestCallback>,
+    on_response: Arc<OnResponseCallback>,
 }
 
 impl HttpServer {
     pub fn new(ip: &str, port: i32) -> Self {
         let (control_sender, control_channel_receiver) = mpsc::channel::<HttpServerControl>(16);
-        let (event_broadcast, _) = broadcast::channel(100);
         HttpServer {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
             control_channel_sender: HttpServerControlChannel { control_sender },
             control_channel_receiver,
-            event_broadcast
+            on_start: Arc::new(|| Box::pin(async {})),
+            on_shutdown: Arc::new(|| Box::pin(async {})),
+            on_request: Arc::new(|_| Box::pin(async {})),
+            on_response: Arc::new(|_| Box::pin(async {})),
         }
+    }
+
+    pub fn on_start<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_start = Arc::new(move || Box::pin(callback()));
+        self
+    }
+
+    pub fn on_shutdown<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_shutdown = Arc::new(move || Box::pin(callback()));
+        self
+    }
+
+    pub fn on_request<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_request = Arc::new(move |request| Box::pin(callback(request)));
+        self
+    }
+
+    pub fn on_response<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(HttpResponse) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_response = Arc::new(move |response| Box::pin(callback(response)));
+        self
     }
 
     pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
@@ -70,29 +105,16 @@ impl HttpServer {
         self
     }
 
-    pub fn route_proxy(mut self, method: &str, route: &str, url: &str) -> Self {
-        let url = url.to_string();
-        let callback = move |request| {
-            let url = url.clone();
-            async move {
-                HttpClient::new(&url)
-                .send(request)
-                .await
-                .unwrap()
-            }
-        };
-
-        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |req| Box::pin(callback(req))));
-        self
-    }
-
     pub async fn start(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
-        let _ = self.event_broadcast.send(HttpServerEvent::OnStart);
+
+        let callback_on_start = Arc::clone(&self.on_start);
+        tokio::spawn(async move {
+            callback_on_start().await;
+        });
 
         let routes = Arc::new(self.routes.clone());
-        let event_broadcast = Arc::new(self.event_broadcast.clone());
         let mut join_set = JoinSet::new();
 
         loop {
@@ -106,7 +128,8 @@ impl HttpServer {
                 result = listener.accept() => {
                     let (mut stream, _) = result.unwrap();
                     let routes = Arc::clone(&routes);
-                    let event_broadcast = Arc::clone(&event_broadcast);
+                    let callback_on_request = Arc::clone(&self.on_request);
+                    let callback_on_response = Arc::clone(&self.on_response);
 
                     join_set.spawn(async move {
                         let request = match HttpRequest::from_stream(&mut stream).await {
@@ -117,18 +140,29 @@ impl HttpServer {
                             }
                         };
 
-                        let _ = event_broadcast.send(HttpServerEvent::OnRequest(request.clone()));
+                        let request_clone = request.clone();
+                        tokio::spawn(async move {
+                            callback_on_request(request_clone).await;
+                        });
+
                         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
                             None => {
                                 let response = HttpResponse::not_found();
                                 HttpServer::write_response(&mut stream, response.clone()).await;
-                                println!("Route not found: {} {}", request.method, request.path);
-                                let _ = event_broadcast.send(HttpServerEvent::OnResponse(response.clone()));
+
+                                let response_clone = response.clone();
+                                tokio::spawn(async move {
+                                    callback_on_response(response_clone).await;
+                                });
                             },
                             Some(callback) => {
                                 let response = callback(request).await;
                                 HttpServer::write_response(&mut stream, response.clone()).await;
-                                let _ = event_broadcast.send(HttpServerEvent::OnResponse(response.clone()));
+
+                                let response_clone = response.clone();
+                                tokio::spawn(async move {
+                                    callback_on_response(response_clone).await;
+                                });
                             }
                         }
                     });
@@ -137,15 +171,15 @@ impl HttpServer {
         }
 
         while let Some(_) = join_set.join_next().await {}
-        let _ = self.event_broadcast.send(HttpServerEvent::OnShutdown);
+
+        let callback_on_shutdown = Arc::clone(&self.on_shutdown);
+        tokio::spawn(async move {
+            callback_on_shutdown().await;
+        });
     }
 
     pub fn get_control_channel(&self) -> HttpServerControlChannel {
         self.control_channel_sender.clone()
-    }
-
-    pub fn get_event_broadcast(&self) -> broadcast::Receiver<HttpServerEvent> {
-        self.event_broadcast.subscribe()
     }
     
     async fn write_response(stream: &mut TcpStream, mut response: HttpResponse) {

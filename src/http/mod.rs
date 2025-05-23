@@ -10,7 +10,7 @@ pub mod http_client;
 #[cfg(feature = "http")]
 #[cfg(test)]
 mod test {
-    use crate::http::{http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, http_server::{HttpServer, HttpServerEvent}};
+    use crate::http::{http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, http_server::HttpServer};
     use tokio::time::Duration;
 
     #[tokio::test(start_paused = true)]
@@ -21,19 +21,6 @@ mod test {
             });
 
         let server_control = server.get_control_channel();
-        let mut server_events = server.get_event_broadcast();
-
-        let event_handle = tokio::spawn(async move {
-            while let Ok(event) = server_events.recv().await {
-                match event {
-                    HttpServerEvent::OnStart => println!("HTTP server started."),
-                    HttpServerEvent::OnShutdown => println!("HTTP server shutdown."),
-                    HttpServerEvent::OnRequest(request) => println!("{:#?}", request),
-                    HttpServerEvent::OnResponse(response) => println!("{:#?}", response),
-                }
-            }
-        });
-
         let server_handle = tokio::spawn(async move {
             server.start().await;
         });
@@ -45,7 +32,6 @@ mod test {
 
         tokio::time::advance(Duration::from_millis(100)).await;
         server_control.shutdown().await;
-        event_handle.await.unwrap();
         server_handle.await.unwrap();
     }
 }
