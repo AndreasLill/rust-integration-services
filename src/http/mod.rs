@@ -16,7 +16,7 @@ mod test {
     #[tokio::test(start_paused = true)]
     async fn http_server() {
         let mut server = HttpServer::new("127.0.0.1", 7878)
-            .route("GET", "/", |_req| async {
+            .route("GET", "/", |_| async {
                 HttpResponse::ok().body("Text")
             });
 

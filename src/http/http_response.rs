@@ -80,6 +80,10 @@ impl HttpResponse {
         format!("{}\r\n{}\r\n{}", first_line_str, headers_str, self.body)
     }
 
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
+
     pub async fn from_stream<S: AsyncRead + Unpin>(stream: &mut S) -> Result<HttpResponse, Error> {
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
