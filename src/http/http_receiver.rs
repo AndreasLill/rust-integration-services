@@ -17,27 +17,27 @@ type OnRequestCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = 
 type OnResponseCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
-pub enum HttpServerControl {
+pub enum HttpReceiverControl {
     Shutdown,
 }
 
 #[derive(Clone)]
-pub struct HttpServerControlChannel {
-    control_sender: mpsc::Sender<HttpServerControl>
+pub struct HttpReceiverControlChannel {
+    control_sender: mpsc::Sender<HttpReceiverControl>
 }
 
-impl HttpServerControlChannel {
+impl HttpReceiverControlChannel {
     pub async fn shutdown(&self) {
-        let _ = self.control_sender.send(HttpServerControl::Shutdown).await;
+        let _ = self.control_sender.send(HttpReceiverControl::Shutdown).await;
     }
 }
 
-pub struct HttpServer {
+pub struct HttpReceiver {
     pub ip: String,
     pub port: i32,
     routes: HashMap<String, RouteCallback>,
-    control_channel_sender: HttpServerControlChannel,
-    control_channel_receiver: mpsc::Receiver<HttpServerControl>,
+    control_channel_sender: HttpReceiverControlChannel,
+    control_channel_receiver: mpsc::Receiver<HttpReceiverControl>,
     callback_on_error: OnErrorCallback,
     callback_on_start: OnStartCallback,
     callback_on_shutdown: OnShutdownCallback,
@@ -45,14 +45,14 @@ pub struct HttpServer {
     callback_on_response: OnResponseCallback,
 }
 
-impl HttpServer {
+impl HttpReceiver {
     pub fn new(ip: &str, port: i32) -> Self {
-        let (control_sender, control_channel_receiver) = mpsc::channel::<HttpServerControl>(16);
-        HttpServer {
+        let (control_sender, control_channel_receiver) = mpsc::channel::<HttpReceiverControl>(16);
+        HttpReceiver {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
-            control_channel_sender: HttpServerControlChannel { control_sender },
+            control_channel_sender: HttpReceiverControlChannel { control_sender },
             control_channel_receiver,
             callback_on_error: Arc::new(|_| Box::pin(async {})),
             callback_on_start: Arc::new(|| Box::pin(async {})),
@@ -116,7 +116,7 @@ impl HttpServer {
         self
     }
 
-    pub fn get_control_channel(&self) -> HttpServerControlChannel {
+    pub fn get_control_channel(&self) -> HttpReceiverControlChannel {
         self.control_channel_sender.clone()
     }
 
@@ -131,7 +131,7 @@ impl HttpServer {
             tokio::select! {
                 event_channel_signal = self.control_channel_receiver.recv() => {
                     match event_channel_signal {
-                        Some(HttpServerControl::Shutdown) => break,
+                        Some(HttpReceiverControl::Shutdown) => break,
                         None => {}
                     }
                 }

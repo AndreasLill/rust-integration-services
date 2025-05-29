@@ -14,7 +14,7 @@ pub struct HttpResponse {
 
 #[allow(dead_code)]
 impl HttpResponse {
-    fn new() -> Self {
+    pub fn new() -> Self {
         HttpResponse {
             protocol: String::from("HTTP/1.1"),
             status_code: 0,
@@ -24,40 +24,40 @@ impl HttpResponse {
         }
     }
     
-    fn status(mut self, code: u16, text: &str) -> Self {
-        self.status_code = code;
-        self.status_text = text.to_string();
-        self
-    }
-
     pub fn ok() -> Self {
         HttpResponse::new().status(200, "OK")
     }
-
+    
     pub fn found() -> Self {
         HttpResponse::new().status(302, "Found")
     }
-
+    
     pub fn bad_request() -> Self {
         HttpResponse::new().status(400, "Bad Request")
     }
-
+    
     pub fn unauthorized() -> Self {
         HttpResponse::new().status(401, "Unauthorized")
     }
-
+    
     pub fn forbidden() -> Self {
         HttpResponse::new().status(403, "Forbidden")
     }
-
+    
     pub fn not_found() -> Self {
         HttpResponse::new().status(404, "Not Found")
     }
-
+    
     pub fn internal_server_error() -> Self {
         HttpResponse::new().status(500, "Internal Server Error")
     }
 
+    pub fn status(mut self, code: u16, text: &str) -> Self {
+        self.status_code = code;
+        self.status_text = text.to_string();
+        self
+    }
+    
     pub fn body(mut self, body: &str) -> Self {
         self.body = body.to_string();
         self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));

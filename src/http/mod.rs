@@ -3,35 +3,36 @@ pub mod http_request;
 #[cfg(feature = "http")]
 pub mod http_response;
 #[cfg(feature = "http")]
-pub mod http_server;
+pub mod http_receiver;
 #[cfg(feature = "http")]
-pub mod http_client;
+pub mod http_sender;
 
 #[cfg(feature = "http")]
 #[cfg(test)]
 mod test {
-    use crate::http::{http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, http_server::HttpServer};
+    use crate::http::{http_sender::HttpSender, http_request::HttpRequest, http_response::HttpResponse, http_receiver::HttpReceiver};
     use tokio::time::Duration;
 
     #[tokio::test(start_paused = true)]
-    async fn http_server() {
-        let mut server = HttpServer::new("127.0.0.1", 7878)
+    async fn http_receiver_sender() {
+        let mut receiver = HttpReceiver::new("127.0.0.1", 7878)
             .route("GET", "/", |_| async {
                 HttpResponse::ok().body("Text")
             });
 
-        let server_control = server.get_control_channel();
-        let server_handle = tokio::spawn(async move {
-            server.start().await;
+        let receiver_control = receiver.get_control_channel();
+        let receiver_handle = tokio::spawn(async move {
+            receiver.start().await;
         });
 
         tokio::time::advance(Duration::from_millis(100)).await;
-        let response = HttpClient::new("http://127.0.0.1:7878").send(HttpRequest::get()).await.unwrap();
+        let request = HttpRequest::get();
+        let response = HttpSender::new("http://127.0.0.1:7878").send(request).await.unwrap();
         assert_eq!(response.status_code, 200);
         assert_eq!(response.body, "Text");
 
         tokio::time::advance(Duration::from_millis(100)).await;
-        server_control.shutdown().await;
-        server_handle.await.unwrap();
+        receiver_control.shutdown().await;
+        receiver_handle.await.unwrap();
     }
 }

@@ -14,14 +14,30 @@ pub struct HttpRequest {
 
 #[allow(dead_code)]
 impl HttpRequest {
-    pub fn get() -> Self {
+    pub fn new() -> Self {
         HttpRequest {
-            method: String::from("GET"),
+            method: String::new(),
             path: String::new(),
             protocol: String::from("HTTP/1.1"),
             headers: HashMap::new(),
             body: String::new(),
         }
+    }
+
+    pub fn get() -> Self {
+        HttpRequest::new().method("GET")
+    }
+
+    pub fn post() -> Self {
+        HttpRequest::new().method("POST")
+    }
+
+    pub fn put() -> Self {
+        HttpRequest::new().method("PUT")
+    }
+
+    pub fn delete() -> Self {
+        HttpRequest::new().method("DELETE")
     }
 
     pub fn header(mut self, key: &str, value: &str) -> Self {
@@ -32,6 +48,11 @@ impl HttpRequest {
     pub fn body(mut self, body: &str) -> Self {
         self.body = body.to_string();
         self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));
+        self
+    }
+
+    pub fn method(mut self, method: &str) -> Self {
+        self.method = method.to_uppercase();
         self
     }
 

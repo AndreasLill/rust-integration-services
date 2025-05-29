@@ -9,21 +9,21 @@ use webpki_roots::TLS_SERVER_ROOTS;
 use super::{http_request::HttpRequest, http_response::HttpResponse};
 
 #[allow(dead_code)]
-pub struct HttpClient {
+pub struct HttpSender {
     url: Url,
 }
 
-impl HttpClient {
+impl HttpSender {
     pub fn new(url: &str) -> Self {
         let url = Url::parse(url).expect("Invalid URL!");
-        HttpClient { 
+        HttpSender { 
             url,
         }
     }
 
     /// Send a request to the url.
     /// 
-    /// Path and host header will be set automatically from the HttpClient url.
+    /// Path and host header will be set automatically from the url.
     pub async fn send(&mut self, mut request: HttpRequest) -> Result<HttpResponse, Error> {
         let host = self.url.host_str().unwrap();
         let port = self.url.port_or_known_default().unwrap();
