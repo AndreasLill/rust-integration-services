@@ -1,20 +1,29 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
-type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
-type OnErrorCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-type OnStartCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-type OnShutdownCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-type OnRequestCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-type OnResponseCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type RouteCallback = Arc<dyn Fn(HttpRequest, String) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+
+#[derive(Clone)]
+pub enum HttpReceiverEventSignal {
+    OnStart,
+    OnShutdown,
+    OnShutdownComplete,
+    OnRouteNotFound(IpAddr, HttpRequest),
+    OnRequest(IpAddr, HttpRequest),
+    OnRequestError(IpAddr, String),
+    OnResponse(IpAddr, HttpResponse),
+    OnResponseError(IpAddr, String),
+}
 
 #[derive(Clone)]
 pub enum HttpReceiverControl {
@@ -38,81 +47,29 @@ pub struct HttpReceiver {
     routes: HashMap<String, RouteCallback>,
     control_channel_sender: HttpReceiverControlChannel,
     control_channel_receiver: mpsc::Receiver<HttpReceiverControl>,
-    callback_on_error: OnErrorCallback,
-    callback_on_start: OnStartCallback,
-    callback_on_shutdown: OnShutdownCallback,
-    callback_on_request: OnRequestCallback,
-    callback_on_response: OnResponseCallback,
+    event_broadcast: broadcast::Sender<HttpReceiverEventSignal>,
 }
 
 impl HttpReceiver {
     pub fn new(ip: &str, port: i32) -> Self {
         let (control_sender, control_channel_receiver) = mpsc::channel::<HttpReceiverControl>(16);
+        let (event_broadcast, _) = broadcast::channel(100);
         HttpReceiver {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
             control_channel_sender: HttpReceiverControlChannel { control_sender },
             control_channel_receiver,
-            callback_on_error: Arc::new(|_| Box::pin(async {})),
-            callback_on_start: Arc::new(|| Box::pin(async {})),
-            callback_on_shutdown: Arc::new(|| Box::pin(async {})),
-            callback_on_request: Arc::new(|_| Box::pin(async {})),
-            callback_on_response: Arc::new(|_| Box::pin(async {})),
+            event_broadcast,
         }
-    }
-
-    pub fn on_error<T, Fut>(mut self, callback: T) -> Self
-    where
-        T: Fn(String) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.callback_on_error = Arc::new(move |error| Box::pin(callback(error)));
-        self
-    }
-
-    pub fn on_start<T, Fut>(mut self, callback: T) -> Self
-    where
-        T: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.callback_on_start = Arc::new(move || Box::pin(callback()));
-        self
-    }
-
-    pub fn on_shutdown<T, Fut>(mut self, callback: T) -> Self
-    where
-        T: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.callback_on_shutdown = Arc::new(move || Box::pin(callback()));
-        self
-    }
-
-    pub fn on_request<T, Fut>(mut self, callback: T) -> Self
-    where
-        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.callback_on_request = Arc::new(move |request| Box::pin(callback(request)));
-        self
-    }
-
-    pub fn on_response<T, Fut>(mut self, callback: T) -> Self
-    where
-        T: Fn(HttpResponse) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.callback_on_response = Arc::new(move |response| Box::pin(callback(response)));
-        self
     }
 
     pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
     where
-        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        T: Fn(HttpRequest, String) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
-        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |request| Box::pin(callback(request))));
+        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |request, client_ip| Box::pin(callback(request, client_ip))));
         self
     }
 
@@ -120,55 +77,79 @@ impl HttpReceiver {
         self.control_channel_sender.clone()
     }
 
+    pub fn get_event_broadcast(&self) -> broadcast::Receiver<HttpReceiverEventSignal> {
+        self.event_broadcast.subscribe()
+    }
+
     pub async fn start(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
         let mut join_set = JoinSet::new();
         let routes = Arc::new(self.routes.clone());
-        (self.callback_on_start)().await;
+        self.event_broadcast.send(HttpReceiverEventSignal::OnStart).ok();
 
         loop {
             tokio::select! {
                 event_channel_signal = self.control_channel_receiver.recv() => {
                     match event_channel_signal {
-                        Some(HttpReceiverControl::Shutdown) => break,
+                        Some(HttpReceiverControl::Shutdown) => {
+                            self.event_broadcast.send(HttpReceiverEventSignal::OnShutdown).ok();
+                            break;
+                        },
                         None => {}
                     }
                 }
                 result = listener.accept() => {
-                    let (mut stream, _) = result.unwrap();
+                    let (mut stream, client_addr) = result.unwrap();
                     let routes = Arc::clone(&routes);
-                    let callback_on_error = Arc::clone(&self.callback_on_error);
-                    let callback_on_request = Arc::clone(&self.callback_on_request);
-                    let callback_on_response = Arc::clone(&self.callback_on_response);
+                    let event_broadcast = Arc::new(self.event_broadcast.clone());
+                    let client_addr = Arc::new(client_addr);
 
                     join_set.spawn(async move {
                         let request = match HttpRequest::from_stream(&mut stream).await {
                             Ok(req) => req,
                             Err(err) => {
-                                callback_on_error(err.to_string()).await;
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(client_addr.ip(), err.to_string())).ok();
                                 let response = HttpResponse::internal_server_error();
-                                stream.write_all(&response.to_bytes()).await.unwrap();
-                                callback_on_response(response.clone()).await;
+                                match stream.write_all(&response.to_bytes()).await {
+                                    Ok(_) => {
+                                        event_broadcast.send(HttpReceiverEventSignal::OnResponse(client_addr.ip(), response.clone())).ok();
+                                    },
+                                    Err(err) => {
+                                        event_broadcast.send(HttpReceiverEventSignal::OnResponseError(client_addr.ip(), err.to_string())).ok();
+                                    },
+                                };
                                 return;
                             }
                         };
 
-                        callback_on_request(request.clone()).await;
-
                         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
                             None => {
+                                event_broadcast.send(HttpReceiverEventSignal::OnRouteNotFound(client_addr.ip(), request.clone())).ok();
                                 let response = HttpResponse::not_found();
-                                stream.write_all(&response.to_bytes()).await.unwrap();
-                                callback_on_response(response.clone()).await;
+                                match stream.write_all(&response.to_bytes()).await {
+                                    Ok(_) => {
+                                        event_broadcast.send(HttpReceiverEventSignal::OnResponse(client_addr.ip(), response.clone())).ok();
+                                    },
+                                    Err(err) => {
+                                        event_broadcast.send(HttpReceiverEventSignal::OnResponseError(client_addr.ip(), err.to_string())).ok();
+                                    },
+                                };
                             },
                             Some(callback) => {
-                                let mut response = callback(request).await;
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequest(client_addr.ip(), request.clone())).ok();
+                                let mut response = callback(request, client_addr.ip().to_string()).await;
                                 if !response.body.is_empty() {
                                     response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
                                 }
-                                stream.write_all(&response.to_bytes()).await.unwrap();
-                                callback_on_response(response.clone()).await;
+                                match stream.write_all(&response.to_bytes()).await {
+                                    Ok(_) => {
+                                        event_broadcast.send(HttpReceiverEventSignal::OnResponse(client_addr.ip(), response.clone())).ok();
+                                    },
+                                    Err(err) => {
+                                        event_broadcast.send(HttpReceiverEventSignal::OnResponseError(client_addr.ip(), err.to_string())).ok();
+                                    },
+                                };
                             }
                         }
                     });
@@ -177,6 +158,6 @@ impl HttpReceiver {
         }
 
         while let Some(_) = join_set.join_next().await {}
-        (self.callback_on_shutdown)().await;
+        self.event_broadcast.send(HttpReceiverEventSignal::OnShutdownComplete).ok();
     }
 }

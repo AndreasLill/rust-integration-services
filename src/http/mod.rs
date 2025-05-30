@@ -10,13 +10,13 @@ pub mod http_sender;
 #[cfg(feature = "http")]
 #[cfg(test)]
 mod test {
-    use crate::http::{http_sender::HttpSender, http_request::HttpRequest, http_response::HttpResponse, http_receiver::HttpReceiver};
+    use crate::http::{http_receiver::HttpReceiver, http_request::HttpRequest, http_response::HttpResponse, http_sender::HttpSender};
     use tokio::time::Duration;
 
     #[tokio::test(start_paused = true)]
     async fn http_receiver_sender() {
         let mut receiver = HttpReceiver::new("127.0.0.1", 7878)
-            .route("GET", "/", |_| async {
+            .route("GET", "/", |_,_| async {
                 HttpResponse::ok().body("Text")
             });
 
