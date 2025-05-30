@@ -18,7 +18,6 @@ pub enum HttpReceiverEventSignal {
     OnStart,
     OnShutdown,
     OnShutdownComplete,
-    OnRouteNotFound(IpAddr, HttpRequest),
     OnRequest(IpAddr, HttpRequest),
     OnRequestError(IpAddr, String),
     OnResponse(IpAddr, HttpResponse),
@@ -125,7 +124,7 @@ impl HttpReceiver {
 
                         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
                             None => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRouteNotFound(client_addr.ip(), request.clone())).ok();
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequest(client_addr.ip(), request.clone())).ok();
                                 let response = HttpResponse::not_found();
                                 match stream.write_all(&response.to_bytes()).await {
                                     Ok(_) => {
