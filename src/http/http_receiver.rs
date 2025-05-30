@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
-type RouteCallback = Arc<dyn Fn(HttpRequest, String) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum HttpReceiverEventSignal {
@@ -66,10 +66,10 @@ impl HttpReceiver {
 
     pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
     where
-        T: Fn(HttpRequest, String) -> Fut + Send + Sync + 'static,
+        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
-        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |request, client_ip| Box::pin(callback(request, client_ip))));
+        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |request| Box::pin(callback(request))));
         self
     }
 
@@ -138,7 +138,7 @@ impl HttpReceiver {
                             },
                             Some(callback) => {
                                 event_broadcast.send(HttpReceiverEventSignal::OnRequest(client_addr.ip(), request.clone())).ok();
-                                let mut response = callback(request, client_addr.ip().to_string()).await;
+                                let mut response = callback(request).await;
                                 if !response.body.is_empty() {
                                     response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
                                 }
