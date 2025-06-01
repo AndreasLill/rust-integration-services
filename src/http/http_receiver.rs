@@ -4,8 +4,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use tokio::signal::unix::signal;
+use tokio::signal::unix::SignalKind;
 use tokio::task::JoinSet;
-use tokio::sync::mpsc;
 use tokio::sync::broadcast;
 
 use super::http_request::HttpRequest;
@@ -24,41 +25,20 @@ pub enum HttpReceiverEventSignal {
     OnResponseError(IpAddr, String),
 }
 
-#[derive(Clone)]
-pub enum HttpReceiverControl {
-    Shutdown,
-}
-
-#[derive(Clone)]
-pub struct HttpReceiverControlChannel {
-    control_sender: mpsc::Sender<HttpReceiverControl>
-}
-
-impl HttpReceiverControlChannel {
-    pub async fn shutdown(&self) {
-        let _ = self.control_sender.send(HttpReceiverControl::Shutdown).await;
-    }
-}
-
 pub struct HttpReceiver {
     pub ip: String,
     pub port: i32,
     routes: HashMap<String, RouteCallback>,
-    control_channel_sender: HttpReceiverControlChannel,
-    control_channel_receiver: mpsc::Receiver<HttpReceiverControl>,
     event_broadcast: broadcast::Sender<HttpReceiverEventSignal>,
 }
 
 impl HttpReceiver {
     pub fn new(ip: &str, port: i32) -> Self {
-        let (control_sender, control_channel_receiver) = mpsc::channel::<HttpReceiverControl>(16);
         let (event_broadcast, _) = broadcast::channel(100);
         HttpReceiver {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
-            control_channel_sender: HttpReceiverControlChannel { control_sender },
-            control_channel_receiver,
             event_broadcast,
         }
     }
@@ -72,31 +52,28 @@ impl HttpReceiver {
         self
     }
 
-    pub fn get_control_channel(&self) -> HttpReceiverControlChannel {
-        self.control_channel_sender.clone()
-    }
-
     pub fn get_event_broadcast(&self) -> broadcast::Receiver<HttpReceiverEventSignal> {
         self.event_broadcast.subscribe()
     }
 
-    pub async fn start(mut self) {
+    pub async fn start(self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
-        let mut join_set = JoinSet::new();
         let routes = Arc::new(self.routes.clone());
+        let mut join_set = JoinSet::new();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
         self.event_broadcast.send(HttpReceiverEventSignal::OnStart).ok();
-
+        
         loop {
             tokio::select! {
-                event_channel_signal = self.control_channel_receiver.recv() => {
-                    match event_channel_signal {
-                        Some(HttpReceiverControl::Shutdown) => {
-                            self.event_broadcast.send(HttpReceiverEventSignal::OnShutdown).ok();
-                            break;
-                        },
-                        None => {}
-                    }
+                _ = sigterm.recv() => {
+                    self.event_broadcast.send(HttpReceiverEventSignal::OnShutdown).ok();
+                    break;
+                }
+                _ = sigint.recv() => {
+                    self.event_broadcast.send(HttpReceiverEventSignal::OnShutdown).ok();
+                    break;
                 }
                 result = listener.accept() => {
                     let (mut stream, client_addr) = result.unwrap();

@@ -20,17 +20,11 @@ mod test {
                 HttpResponse::ok().body("Text")
             });
 
-        let receiver_control = receiver.get_control_channel();
-        let receiver_handle = tokio::spawn(receiver.start());
-
+        tokio::spawn(receiver.start());
         tokio::time::advance(Duration::from_millis(100)).await;
         let request = HttpRequest::get();
         let response = HttpSender::new("http://127.0.0.1:7878").send(request).await.unwrap();
         assert_eq!(response.status_code, 200);
         assert_eq!(response.body, "Text");
-
-        tokio::time::advance(Duration::from_millis(100)).await;
-        receiver_control.shutdown().await;
-        receiver_handle.await.unwrap();
     }
 }
