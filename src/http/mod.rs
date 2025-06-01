@@ -15,15 +15,13 @@ mod test {
 
     #[tokio::test(start_paused = true)]
     async fn http_receiver_sender() {
-        let mut receiver = HttpReceiver::new("127.0.0.1", 7878)
+        let receiver = HttpReceiver::new("127.0.0.1", 7878)
             .route("GET", "/", |_| async {
                 HttpResponse::ok().body("Text")
             });
 
         let receiver_control = receiver.get_control_channel();
-        let receiver_handle = tokio::spawn(async move {
-            receiver.start().await;
-        });
+        let receiver_handle = tokio::spawn(receiver.start());
 
         tokio::time::advance(Duration::from_millis(100)).await;
         let request = HttpRequest::get();
