@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io::Error};
 
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, BufReader}, net::TcpStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, BufReader};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -67,7 +67,7 @@ impl HttpRequest {
         format!("{}\r\n{}\r\n{}", first_line_str, headers_str, self.body)
     }
 
-    pub async fn from_stream(stream: &mut TcpStream) -> Result<HttpRequest, Error> {
+    pub async fn from_stream<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S) -> Result<HttpRequest, Error> {
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
     
