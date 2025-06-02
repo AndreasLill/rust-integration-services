@@ -37,7 +37,7 @@ pub enum HttpReceiverEventSignal {
     OnResponseError(IpAddr, String),
 }
 
-pub struct TlsCert {
+pub struct TlsConfig {
     cert_path: String,
     key_path: String,
 }
@@ -47,7 +47,7 @@ pub struct HttpReceiver {
     pub port: i32,
     routes: HashMap<String, RouteCallback>,
     event_broadcast: broadcast::Sender<HttpReceiverEventSignal>,
-    tls: Option<TlsCert>,
+    tls_config: Option<TlsConfig>,
 }
 
 impl HttpReceiver {
@@ -58,7 +58,7 @@ impl HttpReceiver {
             port,
             routes: HashMap::new(),
             event_broadcast,
-            tls: None,
+            tls_config: None,
         }
     }
 
@@ -72,7 +72,7 @@ impl HttpReceiver {
     }
 
     pub fn tls(mut self, cert_path: &str, key_path: &str) -> Self {
-        self.tls = Some(TlsCert {
+        self.tls_config = Some(TlsConfig {
             cert_path: cert_path.to_string(),
             key_path: key_path.to_string()
         });
@@ -87,10 +87,10 @@ impl HttpReceiver {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
 
-        let tls_acceptor = match &self.tls {
+        let tls_acceptor = match &self.tls_config {
             Some(tls_cert) => {
-                let tls_config = Arc::new(Self::create_tls_config(&tls_cert.cert_path, &tls_cert.key_path).unwrap());
-                Some(TlsAcceptor::from(tls_config))
+                let config = Arc::new(Self::create_tls_config(&tls_cert.cert_path, &tls_cert.key_path).unwrap());
+                Some(TlsAcceptor::from(config))
             },
             None => None,
         };
