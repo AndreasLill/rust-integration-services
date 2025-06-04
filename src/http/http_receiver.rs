@@ -187,7 +187,7 @@ impl HttpReceiver {
         };
     }
     
-    fn create_tls_config(cert_path: &str, key_path: &str) -> Result<ServerConfig, Error> {
+    fn create_tls_config(cert_path: &str, key_path: &str) -> std::io::Result<ServerConfig> {
         let cert_file = File::open(cert_path)?;
         let mut cert_reader = BufReader::new(cert_file);
         let certs = rustls_pemfile::certs(&mut cert_reader)

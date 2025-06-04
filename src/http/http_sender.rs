@@ -1,7 +1,8 @@
-use std::{io::{Error, ErrorKind}, sync::Arc};
-
+use std::sync::Arc;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::io::Error;
+use tokio::io::ErrorKind;
 use tokio_rustls::TlsConnector;
 use url::Url;
 use webpki_roots::TLS_SERVER_ROOTS;
@@ -24,7 +25,7 @@ impl HttpSender {
     /// Send a request to the url.
     /// 
     /// Path and host header will be set automatically from the url.
-    pub async fn send(&mut self, mut request: HttpRequest) -> Result<HttpResponse, Error> {
+    pub async fn send(&mut self, mut request: HttpRequest) -> tokio::io::Result<HttpResponse> {
         let host = self.url.host_str().unwrap();
         let port = self.url.port_or_known_default().unwrap();
         let addr = format!("{}:{}", host, port);
@@ -52,7 +53,7 @@ impl HttpSender {
                 let stream = TcpStream::connect(&addr).await?;
 
                 let domain = rustls::pki_types::ServerName::try_from(host)
-                .map_err(|_| Error::new(ErrorKind::Other, "Invalid DNS name."))?
+                .map_err(|_| tokio::io::Error::new(ErrorKind::Other, "Invalid DNS name."))?
                 .to_owned();
 
                 let mut tls_stream = connector.connect(domain, stream).await?;

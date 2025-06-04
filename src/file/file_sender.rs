@@ -1,5 +1,5 @@
 use std::path::Path;
-use tokio::{fs::OpenOptions, io::{self, AsyncWriteExt}};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
 #[cfg(windows)]
 const NEW_LINE: &[u8] = b"\r\n";
@@ -31,7 +31,7 @@ impl FileSender {
         self
     }
 
-    pub async fn send(self, bytes: &[u8]) -> io::Result<()> {
+    pub async fn send(self, bytes: &[u8]) -> tokio::io::Result<()> {
         let path = Path::new(&self.file_path);
         let mut file = OpenOptions::new().create(true).write(true).append(self.append).open(path).await?;
         file.write_all(bytes).await?;
