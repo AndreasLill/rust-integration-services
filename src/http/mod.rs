@@ -16,7 +16,7 @@ mod test {
     #[tokio::test(start_paused = true)]
     async fn http_receiver_sender() {
         let receiver = HttpReceiver::new("127.0.0.1", 7878)
-            .route("GET", "/", |_| async {
+            .route("GET", "/", |_,_| async {
                 HttpResponse::ok().body("Text")
             });
 

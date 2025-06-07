@@ -3,8 +3,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Error;
 use std::io::ErrorKind;
-use std::net::IpAddr;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use rustls::pki_types::PrivateKeyDer;
@@ -20,18 +18,21 @@ use tokio::sync::broadcast::Sender;
 use tokio::task::JoinSet;
 use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
+use uuid::Uuid;
+
+use crate::common::tracking_info::TrackingInfo;
 
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
-type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type RouteCallback = Arc<dyn Fn(TrackingInfo, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum HttpReceiverEventSignal {
-    OnRequestSuccess(IpAddr, HttpRequest),
-    OnRequestError(IpAddr, String),
-    OnResponseSuccess(IpAddr, HttpResponse),
-    OnResponseError(IpAddr, String),
+    OnRequestSuccess(TrackingInfo, HttpRequest),
+    OnRequestError(TrackingInfo, String),
+    OnResponseSuccess(TrackingInfo, HttpResponse),
+    OnResponseError(TrackingInfo, String),
 }
 
 pub struct TlsConfig {
@@ -61,10 +62,10 @@ impl HttpReceiver {
 
     pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
     where
-        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        T: Fn(TrackingInfo, HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
-        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |request| Box::pin(callback(request))));
+        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |tracking, request| Box::pin(callback(tracking, request))));
         self
     }
 
@@ -105,11 +106,14 @@ impl HttpReceiver {
                     let (stream, client_addr) = result.unwrap();
                     let routes = Arc::clone(&routes);
                     let event_broadcast = Arc::new(self.event_broadcast.clone());
-                    let client_addr = Arc::new(client_addr);
+                    let tracking = TrackingInfo { 
+                        uuid: Uuid::new_v4().to_string(),
+                        ip: client_addr.ip().to_string(),
+                    };
 
                     match tls_acceptor.clone() {
-                        Some(tls_acceptor) => join_set.spawn(Self::accept_connection_tls(stream, tls_acceptor, client_addr, routes, event_broadcast)),
-                        None => join_set.spawn(Self::accept_connection(stream, client_addr, routes, event_broadcast)),
+                        Some(tls_acceptor) => join_set.spawn(Self::accept_connection_tls(stream, tls_acceptor, tracking, routes, event_broadcast)),
+                        None => join_set.spawn(Self::accept_connection(stream, tracking, routes, event_broadcast)),
                     };
                 }
             }
@@ -118,72 +122,72 @@ impl HttpReceiver {
         while let Some(_) = join_set.join_next().await {}
     }
 
-    async fn accept_connection<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, client_addr: Arc<SocketAddr>, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+    async fn accept_connection<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, tracking: TrackingInfo, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
         let request = match HttpRequest::from_stream(&mut stream).await {
             Ok(req) => req,
             Err(err) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(client_addr.ip(), err.to_string())).ok();
-                Self::send_response(stream, client_addr, HttpResponse::internal_server_error(), event_broadcast).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
                 return;
             }
         };
 
         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
             None => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(client_addr.ip(), request.clone())).ok();
-                Self::send_response(stream, client_addr, HttpResponse::not_found(), event_broadcast).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
+                Self::send_response(stream, tracking.clone(), HttpResponse::not_found(), event_broadcast).await;
             },
             Some(callback) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(client_addr.ip(), request.clone())).ok();
-                let response = callback(request).await;
-                Self::send_response(stream, client_addr, response, event_broadcast).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
+                let response = callback(tracking.clone(), request).await;
+                Self::send_response(stream, tracking.clone(), response, event_broadcast).await;
             }
         }
     }
     
-    async fn accept_connection_tls(mut stream: TcpStream, tls_acceptor: TlsAcceptor, client_addr: Arc<SocketAddr>, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+    async fn accept_connection_tls(mut stream: TcpStream, tls_acceptor: TlsAcceptor, tracking: TrackingInfo, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
         let mut peek_buffer = [0u8; 8];
         match stream.peek(&mut peek_buffer).await {
             Ok(len) if len >= 3 => {
                 // Check for TLS ClientHello Signature.
                 let is_tls_client_sig = peek_buffer[0] == 0x16 && peek_buffer[1] == 0x03 && (0x01..=0x03).contains(&peek_buffer[2]);
                 if !is_tls_client_sig {
-                    event_broadcast.send(HttpReceiverEventSignal::OnRequestError(client_addr.ip(), "Non-TLS request on TLS receiver.".to_string())).ok();
-                    Self::send_response(stream, client_addr, HttpResponse::internal_server_error(), event_broadcast).await;
+                    event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), "Non-TLS request on TLS receiver.".to_string())).ok();
+                    Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
                     return;
                 }
             },
             Ok(_) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(client_addr.ip(), "Could not determine TLS signature.".to_string())).ok();
-                Self::send_response(stream, client_addr, HttpResponse::internal_server_error(), event_broadcast).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), "Could not determine TLS signature.".to_string())).ok();
+                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
                 return;
             },
             Err(err) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(client_addr.ip(), err.to_string())).ok();
-                Self::send_response(stream, client_addr, HttpResponse::internal_server_error(), event_broadcast).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
                 return;
             }
         }
 
         match tls_acceptor.accept(&mut stream).await {
-            Ok(tls_stream) => Self::accept_connection(tls_stream, client_addr, routes, event_broadcast).await,
+            Ok(tls_stream) => Self::accept_connection(tls_stream, tracking, routes, event_broadcast).await,
             Err(err) => {
                 let err = format!("TLS handshake failed: {}", err.to_string());
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(client_addr.ip(), err)).ok();
-                Self::send_response(stream, client_addr, HttpResponse::internal_server_error(), event_broadcast).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err)).ok();
+                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
                 return;
             }
         };
     }
 
 
-    async fn send_response<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, client_addr: Arc<SocketAddr>, mut response: HttpResponse, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+    async fn send_response<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, tracking: TrackingInfo, mut response: HttpResponse, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
         if !response.body.is_empty() {
             response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
         }
         match stream.write_all(&response.to_bytes()).await {
-            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(client_addr.ip(), response.clone())).ok(),
-            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(client_addr.ip(), err.to_string())).ok(),
+            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking, response.clone())).ok(),
+            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking, err.to_string())).ok(),
         };
     }
     
