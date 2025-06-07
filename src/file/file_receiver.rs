@@ -11,7 +11,6 @@ type FileCallback = Arc<dyn Fn(TrackingInfo, PathBuf) -> Pin<Box<dyn Future<Outp
 #[derive(Clone)]
 pub enum FileReceiverEventSignal {
     OnFileReceived(TrackingInfo, PathBuf),
-    OnFileSuccess(TrackingInfo, PathBuf),
 }
 
 pub struct FileReceiver {
@@ -93,7 +92,6 @@ impl FileReceiver {
                                 let callback = Arc::clone(&callback);
                                 let file = Arc::new(file.clone());
                                 let ignore_list = Arc::clone(&ignore_list);
-                                let event_broadcast = Arc::new(self.event_broadcast.clone());
                                 let tracking = TrackingInfo::new()
                                     .uuid(Uuid::new_v4().to_string());
                                 
@@ -104,7 +102,6 @@ impl FileReceiver {
                                     if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
                                         unlocked_list.remove(pos);
                                     }
-                                    event_broadcast.send(FileReceiverEventSignal::OnFileSuccess(tracking.clone(), file.to_path_buf())).ok();
                                 });
                             }
                         }
