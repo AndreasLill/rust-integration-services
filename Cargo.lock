@@ -639,6 +639,7 @@ dependencies = [
 name = "rust-integration-services"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "rustls",
  "rustls-pemfile",
  "tokio",
