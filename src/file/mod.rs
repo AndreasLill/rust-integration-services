@@ -14,8 +14,8 @@ mod test {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn file_sender_move() {
-        let result = FileSender::new().move_file("./test/file/in/TextFile1.txt", "./test/file/out/TextFile1.txt").await;
+    async fn file_sender_copy() {
+        let result = FileSender::new().copy_file("./test/file/in/TextFile1.txt", "./test/file/out/TextFile1.txt").await;
         assert!(result.is_ok());
     }
 
@@ -26,7 +26,7 @@ mod test {
         .filter(r"^[^\.]+?\.[^\.]+$", async move |path| {
             let target_path = &format!("./test/file/out/{}", path.file_name().unwrap().to_str().unwrap());
             let source_path = path.to_str().unwrap();
-            FileSender::new().move_file(source_path, target_path).await.unwrap();
+            FileSender::new().copy_file(source_path, target_path).await.unwrap();
         })
         .start().await;
     }

@@ -8,16 +8,14 @@ const NEW_LINE: &[u8] = b"\n";
 
 pub struct FileSender {
     append: bool,
-    add_new_line: bool,
-    delete_source_file: bool,
+    append_new_line: bool,
 }
 
 impl FileSender {
     pub fn new() -> Self {
         FileSender  { 
             append: false,
-            add_new_line: false,
-            delete_source_file: false,
+            append_new_line: false,
         }
     }
 
@@ -26,13 +24,8 @@ impl FileSender {
         self
     }
 
-    pub fn new_line(mut self, new_line: bool) -> Self {
-        self.add_new_line = new_line;
-        self
-    }
-
-    pub fn delete_source(mut self, delete_source: bool) -> Self {
-        self.delete_source_file = delete_source;
+    pub fn append_new_line(mut self, new_line: bool) -> Self {
+        self.append_new_line = new_line;
         self
     }
 
@@ -41,7 +34,7 @@ impl FileSender {
         let mut file = OpenOptions::new().create(true).write(true).append(self.append).truncate(!self.append).open(path).await?;
         file.write_all(bytes).await?;
 
-        if self.add_new_line {
+        if self.append_new_line {
             file.write_all(NEW_LINE).await?;
         }
 
@@ -52,7 +45,15 @@ impl FileSender {
         self.write_bytes(string.as_bytes(), target_path).await
     }
 
+    pub async fn copy_file(self, source_path: &str, target_path: &str) -> tokio::io::Result<()> {
+        self.copy(source_path, target_path, false).await
+    }
+
     pub async fn move_file(self, source_path: &str, target_path: &str) -> tokio::io::Result<()> {
+        self.copy(source_path, target_path, true).await
+    }
+
+    async fn copy(self, source_path: &str, target_path: &str, delete_file_on_success: bool) -> tokio::io::Result<()> {
         let source_path = Path::new(source_path);
         let target_path = Path::new(target_path);
         let mut source = OpenOptions::new().read(true).open(source_path).await?;
@@ -68,11 +69,11 @@ impl FileSender {
         }
         target.flush().await?;
 
-        if self.add_new_line {
+        if self.append_new_line {
             target.write_all(NEW_LINE).await?;
         }
 
-        if self.delete_source_file {
+        if delete_file_on_success {
             drop(source);
             tokio::fs::remove_file(source_path).await?;
         }
