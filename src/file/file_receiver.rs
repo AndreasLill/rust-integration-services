@@ -4,12 +4,14 @@ use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::{broadcast, Mutex}, task::JoinSet};
 use uuid::Uuid;
 
-type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+use crate::common::tracking_info::TrackingInfo;
+
+type FileCallback = Arc<dyn Fn(TrackingInfo, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum FileReceiverEventSignal {
-    OnFileReceived(String, PathBuf),
-    OnFileSuccess(String, PathBuf),
+    OnFileReceived(TrackingInfo, PathBuf),
+    OnFileSuccess(TrackingInfo, PathBuf),
 }
 
 pub struct FileReceiver {
@@ -37,11 +39,11 @@ impl FileReceiver {
 
     pub fn filter<T, Fut>(mut self, filter: &str, callback: T) -> Self 
     where
-        T: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
+        T: Fn(TrackingInfo, PathBuf) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         Regex::new(filter).expect("Invalid Regex!");
-        self.filter.insert(filter.to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
+        self.filter.insert(filter.to_string(), Arc::new(move |tracking, path| Box::pin(callback(tracking, path))));
         self
     }
 
@@ -92,16 +94,19 @@ impl FileReceiver {
                                 let file = Arc::new(file.clone());
                                 let ignore_list = Arc::clone(&ignore_list);
                                 let event_broadcast = Arc::new(self.event_broadcast.clone());
-                                let transaction_uuid = Uuid::new_v4();
+                                let tracking = TrackingInfo {
+                                    uuid: Uuid::new_v4().to_string(),
+                                    ip: String::new()
+                                };
                                 
-                                self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(transaction_uuid.to_string(), file.to_path_buf())).ok();
+                                self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file.to_path_buf())).ok();
                                 join_set.spawn(async move {
-                                    callback(transaction_uuid.to_string(), file.to_path_buf()).await;
+                                    callback(tracking.clone(), file.to_path_buf()).await;
                                     let mut unlocked_list = ignore_list.lock().await;
                                     if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
                                         unlocked_list.remove(pos);
                                     }
-                                    event_broadcast.send(FileReceiverEventSignal::OnFileSuccess(transaction_uuid.to_string(), file.to_path_buf())).ok();
+                                    event_broadcast.send(FileReceiverEventSignal::OnFileSuccess(tracking.clone(), file.to_path_buf())).ok();
                                 });
                             }
                         }
