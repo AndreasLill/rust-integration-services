@@ -94,10 +94,8 @@ impl FileReceiver {
                                 let file = Arc::new(file.clone());
                                 let ignore_list = Arc::clone(&ignore_list);
                                 let event_broadcast = Arc::new(self.event_broadcast.clone());
-                                let tracking = TrackingInfo {
-                                    uuid: Uuid::new_v4().to_string(),
-                                    ip: String::new()
-                                };
+                                let tracking = TrackingInfo::new()
+                                    .uuid(Uuid::new_v4().to_string());
                                 
                                 self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file.to_path_buf())).ok();
                                 join_set.spawn(async move {

@@ -106,10 +106,9 @@ impl HttpReceiver {
                     let (stream, client_addr) = result.unwrap();
                     let routes = Arc::clone(&routes);
                     let event_broadcast = Arc::new(self.event_broadcast.clone());
-                    let tracking = TrackingInfo { 
-                        uuid: Uuid::new_v4().to_string(),
-                        ip: client_addr.ip().to_string(),
-                    };
+                    let tracking = TrackingInfo::new()
+                        .uuid(Uuid::new_v4().to_string())
+                        .ip(client_addr.ip().to_string());
 
                     match tls_acceptor.clone() {
                         Some(tls_acceptor) => join_set.spawn(Self::accept_connection_tls(stream, tls_acceptor, tracking, routes, event_broadcast)),
