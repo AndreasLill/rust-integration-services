@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, pin::Pin, sync::Arc, time::Duration};
 use regex::Regex;
-use tokio::{signal::unix::{signal, SignalKind}, sync::{broadcast, Mutex}, task::JoinSet};
+use tokio::{signal::unix::{signal, SignalKind}, sync::{mpsc, Mutex}, task::JoinSet};
 use uuid::Uuid;
 
 use crate::file::file_tracking::FileTracking;
@@ -15,18 +15,20 @@ pub enum FileReceiverEventSignal {
 pub struct FileReceiver {
     path: String,
     filter: HashMap<String, FileCallback>,
-    event_broadcast: broadcast::Sender<FileReceiverEventSignal>,
+    event_broadcast: mpsc::Sender<FileReceiverEventSignal>,
+    event_receiver: Option<mpsc::Receiver<FileReceiverEventSignal>>,
     event_join_set: JoinSet<()>,
     poll_interval: u64,
 }
 
 impl FileReceiver {
     pub fn new(path: &str) -> Self {
-        let (event_broadcast, _) = broadcast::channel(100);
+        let (event_broadcast, event_receiver) = mpsc::channel(128);
         FileReceiver {
             path: path.to_string(),
             filter: HashMap::new(),
             event_broadcast,
+            event_receiver: Some(event_receiver),
             event_join_set: JoinSet::new(),
             poll_interval: 500,
         }
@@ -52,7 +54,7 @@ impl FileReceiver {
         T: Fn(FileReceiverEventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let mut rx = self.event_broadcast.subscribe();
+        let mut receiver = self.event_receiver.unwrap();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
         self.event_join_set.spawn(async move {
@@ -60,16 +62,17 @@ impl FileReceiver {
                 tokio::select! {
                     _ = sigterm.recv() => break,
                     _ = sigint.recv() => break,
-                    event = rx.recv() => {
+                    event = receiver.recv() => {
                         match event {
-                            Ok(event) => handler(event).await,
-                            Err(broadcast::error::RecvError::Closed) => break,
-                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                            Some(event) => handler(event).await,
+                            None => break,
                         }
                     }
                 }
             }
         });
+
+        self.event_receiver = None;
         self
     }
 
@@ -119,9 +122,8 @@ impl FileReceiver {
                                 let tracking = FileTracking {
                                     uuid: Uuid::new_v4().to_string(),
                                 };
-                                let event_broadcast = Arc::new(self.event_broadcast.clone());
                             
-                                event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file_path.to_path_buf())).ok();
+                                self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file_path.to_path_buf())).await.unwrap();
                                 join_set.spawn(async move {
                                     callback(tracking, file_path.to_path_buf()).await;
                                     let mut unlocked_list = ignore_list.lock().await;

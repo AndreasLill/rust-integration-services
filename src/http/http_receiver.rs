@@ -12,8 +12,8 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::signal::unix::signal;
 use tokio::signal::unix::SignalKind;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
-use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
@@ -43,19 +43,21 @@ pub struct HttpReceiver {
     pub ip: String,
     pub port: i32,
     routes: HashMap<String, RouteCallback>,
-    event_broadcast: broadcast::Sender<HttpReceiverEventSignal>,
+    event_broadcast: mpsc::Sender<HttpReceiverEventSignal>,
+    event_receiver: Option<mpsc::Receiver<HttpReceiverEventSignal>>,
     event_join_set: JoinSet<()>,
     tls_config: Option<TlsConfig>,
 }
 
 impl HttpReceiver {
     pub fn new(ip: &str, port: i32) -> Self {
-        let (event_broadcast, _) = broadcast::channel(100);
+        let (event_broadcast, event_receiver) = mpsc::channel(128);
         HttpReceiver {
             ip: String::from(ip),
             port,
             routes: HashMap::new(),
             event_broadcast,
+            event_receiver: Some(event_receiver),
             event_join_set: JoinSet::new(),
             tls_config: None,
         }
@@ -83,7 +85,7 @@ impl HttpReceiver {
         T: Fn(HttpReceiverEventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let mut rx = self.event_broadcast.subscribe();
+        let mut receiver = self.event_receiver.unwrap();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
         self.event_join_set.spawn(async move {
@@ -91,16 +93,17 @@ impl HttpReceiver {
                 tokio::select! {
                     _ = sigterm.recv() => break,
                     _ = sigint.recv() => break,
-                    event = rx.recv() => {
+                    event = receiver.recv() => {
                         match event {
-                            Ok(event) => handler(event).await,
-                            Err(broadcast::error::RecvError::Closed) => break,
-                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                            Some(event) => handler(event).await,
+                            None => break,
                         }
                     }
                 }
             }
         });
+        
+        self.event_receiver = None;
         self
     }
 
@@ -141,12 +144,12 @@ impl HttpReceiver {
                                 match Self::is_connection_tls(&stream).await {
                                     Ok(_) => {},
                                     Err(err) => {
-                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).await.unwrap();
                                         //on_request_error(tracking.clone(), err.to_string()).await;
                                         let response = HttpResponse::internal_server_error();
                                         match stream.write_all(&response.to_bytes()).await {
-                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).ok(),
-                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).ok(),
+                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
+                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
                                         };
                                         return;
                                     },
@@ -156,12 +159,12 @@ impl HttpReceiver {
                                     Ok(tls_stream) => Box::new(tls_stream),
                                     Err(err) => {
                                         let err = format!("TLS handshake failed: {}", err.to_string());
-                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).await.unwrap();
                                         //on_request_error(tracking.clone(), err.to_string()).await;
                                         let response = HttpResponse::internal_server_error();
                                         match stream.write_all(&response.to_bytes()).await {
-                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).ok(),
-                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).ok(),
+                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
+                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
                                         };
                                         return;
                                     },
@@ -173,12 +176,12 @@ impl HttpReceiver {
                         let request = match HttpRequest::from_stream(&mut stream).await {
                             Ok(req) => req,
                             Err(err) => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).await.unwrap();
                                 //on_request_error(tracking.clone(), err.to_string()).await;
                                 let response = HttpResponse::internal_server_error();
                                 match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).ok(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).ok(),
+                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
+                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
                                 };
                                 return;
                             }
@@ -186,24 +189,24 @@ impl HttpReceiver {
 
                         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
                             None => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).await.unwrap();
                                 //on_request_success(tracking.clone(), request.clone()).await;
                                 let response = HttpResponse::not_found();
                                 match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).ok(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).ok(),
+                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
+                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
                                 };
                             },
                             Some(callback) => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).await.unwrap();
                                 //on_request_success(tracking.clone(), request.clone()).await;
                                 let mut response = callback(tracking.clone(), request).await;
                                 if !response.body.is_empty() {
                                     response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
                                 }
                                 match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).ok(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).ok(),
+                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
+                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
                                 };
                             }
                         }
