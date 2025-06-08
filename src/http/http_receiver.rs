@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
-use std::io::Error;
-use std::io::ErrorKind;
 use std::pin::Pin;
 use std::sync::Arc;
 use rustls::pki_types::PrivateKeyDer;
@@ -14,7 +12,7 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::signal::unix::signal;
 use tokio::signal::unix::SignalKind;
-use tokio::sync::broadcast::Sender;
+//use tokio::sync::broadcast::Sender;
 use tokio::task::JoinSet;
 use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
@@ -25,7 +23,14 @@ use crate::common::tracking_info::TrackingInfo;
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
+pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncStream for T {}
+
 type RouteCallback = Arc<dyn Fn(TrackingInfo, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type OnRequestSuccessCallback = Arc<dyn Fn(TrackingInfo, HttpRequest) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type OnRequestErrorCallback = Arc<dyn Fn(TrackingInfo, String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type OnResponseSuccessCallback = Arc<dyn Fn(TrackingInfo, HttpResponse) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type OnResponseErrorCallback = Arc<dyn Fn(TrackingInfo, String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum HttpReceiverEventSignal {
@@ -46,6 +51,10 @@ pub struct HttpReceiver {
     routes: HashMap<String, RouteCallback>,
     event_broadcast: broadcast::Sender<HttpReceiverEventSignal>,
     tls_config: Option<TlsConfig>,
+    on_request_success: OnRequestSuccessCallback,
+    on_request_error: OnRequestErrorCallback,
+    on_response_success: OnResponseSuccessCallback,
+    on_response_error: OnResponseErrorCallback,
 }
 
 impl HttpReceiver {
@@ -57,6 +66,10 @@ impl HttpReceiver {
             routes: HashMap::new(),
             event_broadcast,
             tls_config: None,
+            on_request_success: Arc::new(|_,_| Box::pin(async {})),
+            on_request_error: Arc::new(|_,_| Box::pin(async {})),
+            on_response_success: Arc::new(|_,_| Box::pin(async {})),
+            on_response_error: Arc::new(|_,_| Box::pin(async {})),
         }
     }
 
@@ -94,7 +107,7 @@ impl HttpReceiver {
         };
 
         let routes = Arc::new(self.routes.clone());
-        let mut join_set = JoinSet::new();
+        let mut join_set_main = JoinSet::new();
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
         
@@ -103,91 +116,112 @@ impl HttpReceiver {
                 _ = sigterm.recv() => break,
                 _ = sigint.recv() => break,
                 result = listener.accept() => {
-                    let (stream, client_addr) = result.unwrap();
+                    let (mut stream, client_addr) = result.unwrap();
                     let routes = Arc::clone(&routes);
-                    let event_broadcast = Arc::new(self.event_broadcast.clone());
+                    //let event_broadcast = Arc::new(self.event_broadcast.clone());
                     let tracking = TrackingInfo::new()
                         .uuid(Uuid::new_v4().to_string())
                         .ip(client_addr.ip().to_string());
+                    let tls_acceptor = tls_acceptor.clone();
+                    let on_request_error = Arc::clone(&self.on_request_error);
+                    let on_request_success = Arc::clone(&self.on_request_success);
+                    let on_response_error = Arc::clone(&self.on_response_error);
+                    let on_response_success = Arc::clone(&self.on_response_success);
+                    
+                    join_set_main.spawn(async move {
+                        let mut stream: Box<dyn AsyncStream> = match tls_acceptor {
+                            Some(acceptor) => {
+                                match Self::is_connection_tls(&stream).await {
+                                    Ok(_) => {},
+                                    Err(err) => {
+                                        //event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                                        on_request_error(tracking.clone(), err.to_string()).await;
+                                        let response = HttpResponse::internal_server_error();
+                                        match stream.write_all(&response.to_bytes()).await {
+                                            Ok(_) => on_response_success(tracking.clone(), response.clone()).await,
+                                            Err(err) => on_response_error(tracking.clone(), err.to_string()).await,
+                                        }
+                                        return;
+                                    },
+                                };
 
-                    match tls_acceptor.clone() {
-                        Some(tls_acceptor) => join_set.spawn(Self::accept_connection_tls(stream, tls_acceptor, tracking, routes, event_broadcast)),
-                        None => join_set.spawn(Self::accept_connection(stream, tracking, routes, event_broadcast)),
-                    };
+                                match acceptor.accept(&mut stream).await {
+                                    Ok(tls_stream) => Box::new(tls_stream),
+                                    Err(err) => {
+                                        let err = format!("TLS handshake failed: {}", err.to_string());
+                                        //event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                                        on_request_error(tracking.clone(), err.to_string()).await;
+                                        let response = HttpResponse::internal_server_error();
+                                        match stream.write_all(&response.to_bytes()).await {
+                                            Ok(_) => on_response_success(tracking.clone(), response.clone()).await,
+                                            Err(err) => on_response_error(tracking.clone(), err.to_string()).await,
+                                        }
+                                        return;
+                                    },
+                                }
+                            },
+                            None => Box::new(stream),
+                        };
+
+                        let request = match HttpRequest::from_stream(&mut stream).await {
+                            Ok(req) => req,
+                            Err(err) => {
+                                //event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
+                                on_request_error(tracking.clone(), err.to_string()).await;
+                                let response = HttpResponse::internal_server_error();
+                                match stream.write_all(&response.to_bytes()).await {
+                                    Ok(_) => on_response_success(tracking.clone(), response.clone()).await,
+                                    Err(err) => on_response_error(tracking.clone(), err.to_string()).await,
+                                }
+                                return;
+                            }
+                        };
+
+                        match routes.get(&format!("{}|{}", &request.method, &request.path)) {
+                            None => {
+                                //event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
+                                on_request_success(tracking.clone(), request.clone()).await;
+                                let response = HttpResponse::not_found();
+                                match stream.write_all(&response.to_bytes()).await {
+                                    Ok(_) => on_response_success(tracking.clone(), response.clone()).await,
+                                    Err(err) => on_response_error(tracking.clone(), err.to_string()).await,
+                                }
+                            },
+                            Some(callback) => {
+                                //event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
+                                on_request_success(tracking.clone(), request.clone()).await;
+                                let mut response = callback(tracking.clone(), request).await;
+                                if !response.body.is_empty() {
+                                    response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
+                                }
+                                match stream.write_all(&response.to_bytes()).await {
+                                    Ok(_) => on_response_success(tracking.clone(), response.clone()).await,
+                                    Err(err) => on_response_error(tracking.clone(), err.to_string()).await,
+                                }
+                            }
+                        }
+                    });
                 }
             }
         }
 
-        while let Some(_) = join_set.join_next().await {}
+        while let Some(_) = join_set_main.join_next().await {}
     }
 
-    async fn accept_connection<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, tracking: TrackingInfo, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
-        let request = match HttpRequest::from_stream(&mut stream).await {
-            Ok(req) => req,
-            Err(err) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
-                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
-                return;
-            }
-        };
-
-        match routes.get(&format!("{}|{}", &request.method, &request.path)) {
-            None => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
-                Self::send_response(stream, tracking.clone(), HttpResponse::not_found(), event_broadcast).await;
-            },
-            Some(callback) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).ok();
-                let response = callback(tracking.clone(), request).await;
-                Self::send_response(stream, tracking.clone(), response, event_broadcast).await;
-            }
-        }
-    }
-    
-    async fn accept_connection_tls(mut stream: TcpStream, tls_acceptor: TlsAcceptor, tracking: TrackingInfo, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+    async fn is_connection_tls(stream: &TcpStream) -> tokio::io::Result<()> {
         let mut peek_buffer = [0u8; 8];
         match stream.peek(&mut peek_buffer).await {
             Ok(len) if len >= 3 => {
                 // Check for TLS ClientHello Signature.
                 let is_tls_client_sig = peek_buffer[0] == 0x16 && peek_buffer[1] == 0x03 && (0x01..=0x03).contains(&peek_buffer[2]);
-                if !is_tls_client_sig {
-                    event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), "Non-TLS request on TLS receiver.".to_string())).ok();
-                    Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
-                    return;
+                if is_tls_client_sig {
+                    return Ok(())
                 }
+                Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, "Non-TLS request on TLS receiver."))
             },
-            Ok(_) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), "Could not determine TLS signature.".to_string())).ok();
-                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
-                return;
-            },
-            Err(err) => {
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).ok();
-                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
-                return;
-            }
+            Ok(_) => Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, "Could not determine TLS signature.")),
+            Err(err) => Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, err.to_string())),
         }
-
-        match tls_acceptor.accept(&mut stream).await {
-            Ok(tls_stream) => Self::accept_connection(tls_stream, tracking, routes, event_broadcast).await,
-            Err(err) => {
-                let err = format!("TLS handshake failed: {}", err.to_string());
-                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err)).ok();
-                Self::send_response(stream, tracking.clone(), HttpResponse::internal_server_error(), event_broadcast).await;
-                return;
-            }
-        };
-    }
-
-
-    async fn send_response<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, tracking: TrackingInfo, mut response: HttpResponse, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
-        if !response.body.is_empty() {
-            response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
-        }
-        match stream.write_all(&response.to_bytes()).await {
-            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking, response.clone())).ok(),
-            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking, err.to_string())).ok(),
-        };
     }
     
     fn create_tls_config(cert_path: &str, key_path: &str) -> std::io::Result<ServerConfig> {
@@ -195,20 +229,56 @@ impl HttpReceiver {
         let mut cert_reader = BufReader::new(cert_file);
         let certs = rustls_pemfile::certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| Error::new(ErrorKind::InvalidData, "Invalid certificate"))?;
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid certificate"))?;
 
         let key_file = File::open(key_path)?;
         let mut key_reader = BufReader::new(key_file);
         let mut keys = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| Error::new(ErrorKind::InvalidData, "Invalid private key"))?;
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid private key"))?;
 
         let key = keys.pop().unwrap();
         let config = ServerConfig::builder()
             .with_no_client_auth() // Adjust if client auth is needed
             .with_single_cert(certs, PrivateKeyDer::Pkcs8(key))
-            .map_err(|err| Error::new(ErrorKind::InvalidData, err))?;
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
 
         Ok(config)
+    }
+
+    pub fn on_request_success<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(TrackingInfo, HttpRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_request_success = Arc::new(move |tracking, request| Box::pin(callback(tracking, request)));
+        self
+    }
+
+    pub fn on_request_error<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(TrackingInfo, String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_request_error = Arc::new(move |tracking, error| Box::pin(callback(tracking, error)));
+        self
+    }
+
+    pub fn on_response_success<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(TrackingInfo, HttpResponse) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_response_success = Arc::new(move |tracking, response| Box::pin(callback(tracking, response)));
+        self
+    }
+
+    pub fn on_response_error<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(TrackingInfo, String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_response_error = Arc::new(move |tracking, error| Box::pin(callback(tracking, error)));
+        self
     }
 }
