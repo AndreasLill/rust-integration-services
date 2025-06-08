@@ -17,22 +17,21 @@ use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use crate::common::tracking_info::TrackingInfo;
-
+use super::http_tracking::HttpTracking;
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
 pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncStream for T {}
 
-type RouteCallback = Arc<dyn Fn(TrackingInfo, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type RouteCallback = Arc<dyn Fn(HttpTracking, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum HttpReceiverEventSignal {
-    OnRequestSuccess(TrackingInfo, HttpRequest),
-    OnRequestError(TrackingInfo, String),
-    OnResponseSuccess(TrackingInfo, HttpResponse),
-    OnResponseError(TrackingInfo, String),
+    OnRequestSuccess(HttpTracking, HttpRequest),
+    OnRequestError(HttpTracking, String),
+    OnResponseSuccess(HttpTracking, HttpResponse),
+    OnResponseError(HttpTracking, String),
 }
 
 pub struct TlsConfig {
@@ -64,7 +63,7 @@ impl HttpReceiver {
 
     pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
     where
-        T: Fn(TrackingInfo, HttpRequest) -> Fut + Send + Sync + 'static,
+        T: Fn(HttpTracking, HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
         self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |tracking, request| Box::pin(callback(tracking, request))));
@@ -92,7 +91,13 @@ impl HttpReceiver {
                 tokio::select! {
                     _ = sigterm.recv() => break,
                     _ = sigint.recv() => break,
-                    event = rx.recv() => handler(event.unwrap()).await,
+                    event = rx.recv() => {
+                        match event {
+                            Ok(event) => handler(event).await,
+                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        }
+                    }
                 }
             }
         });
@@ -124,10 +129,11 @@ impl HttpReceiver {
                     let (mut stream, client_addr) = result.unwrap();
                     let routes = Arc::clone(&routes);
                     let event_broadcast = Arc::new(self.event_broadcast.clone());
-                    let tracking = TrackingInfo::new()
-                        .uuid(Uuid::new_v4().to_string())
-                        .ip(client_addr.ip().to_string());
                     let tls_acceptor = tls_acceptor.clone();
+                    let tracking = HttpTracking {
+                        uuid: Uuid::new_v4().to_string(),
+                        ip: client_addr.ip().to_string(),
+                    };
                     
                     join_set_main.spawn(async move {
                         let mut stream: Box<dyn AsyncStream> = match tls_acceptor {

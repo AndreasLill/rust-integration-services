@@ -1,4 +1,6 @@
 #[cfg(feature = "http")]
+pub mod http_tracking;
+#[cfg(feature = "http")]
 pub mod http_request;
 #[cfg(feature = "http")]
 pub mod http_response;

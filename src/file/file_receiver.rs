@@ -3,13 +3,13 @@ use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::{broadcast, Mutex}, task::JoinSet};
 use uuid::Uuid;
 
-use crate::common::tracking_info::TrackingInfo;
+use crate::file::file_tracking::FileTracking;
 
-type FileCallback = Arc<dyn Fn(TrackingInfo, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type FileCallback = Arc<dyn Fn(FileTracking, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum FileReceiverEventSignal {
-    OnFileReceived(TrackingInfo, PathBuf),
+    OnFileReceived(FileTracking, PathBuf),
 }
 
 pub struct FileReceiver {
@@ -39,7 +39,7 @@ impl FileReceiver {
 
     pub fn filter<T, Fut>(mut self, filter: &str, callback: T) -> Self 
     where
-        T: Fn(TrackingInfo, PathBuf) -> Fut + Send + Sync + 'static,
+        T: Fn(FileTracking, PathBuf) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         Regex::new(filter).expect("Invalid Regex!");
@@ -60,7 +60,13 @@ impl FileReceiver {
                 tokio::select! {
                     _ = sigterm.recv() => break,
                     _ = sigint.recv() => break,
-                    event = rx.recv() => handler(event.unwrap()).await,
+                    event = rx.recv() => {
+                        match event {
+                            Ok(event) => handler(event).await,
+                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        }
+                    }
                 }
             }
         });
@@ -110,7 +116,9 @@ impl FileReceiver {
                                 let callback = Arc::clone(&callback);
                                 let ignore_list = Arc::clone(&ignore_list);
                                 let file_path = Arc::new(file_path.to_path_buf());
-                                let tracking = TrackingInfo::new().uuid(Uuid::new_v4().to_string());
+                                let tracking = FileTracking {
+                                    uuid: Uuid::new_v4().to_string(),
+                                };
                                 let event_broadcast = Arc::new(self.event_broadcast.clone());
                             
                                 event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file_path.to_path_buf())).ok();
