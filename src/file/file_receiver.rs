@@ -1,13 +1,11 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, pin::Pin, sync::Arc, time::Duration};
-
 use regex::Regex;
-use tokio::{signal::unix::{signal, SignalKind}, sync::Mutex, task::JoinSet};
+use tokio::{signal::unix::{signal, SignalKind}, sync::{broadcast, Mutex}, task::JoinSet};
 use uuid::Uuid;
 
 use crate::common::tracking_info::TrackingInfo;
 
 type FileCallback = Arc<dyn Fn(TrackingInfo, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-type OnFileReceivedCallback = Arc<dyn Fn(TrackingInfo, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum FileReceiverEventSignal {
@@ -17,17 +15,20 @@ pub enum FileReceiverEventSignal {
 pub struct FileReceiver {
     path: String,
     filter: HashMap<String, FileCallback>,
+    event_broadcast: broadcast::Sender<FileReceiverEventSignal>,
+    event_join_set: JoinSet<()>,
     poll_interval: u64,
-    on_file_received: OnFileReceivedCallback,
 }
 
 impl FileReceiver {
     pub fn new(path: &str) -> Self {
+        let (event_broadcast, _) = broadcast::channel(100);
         FileReceiver {
             path: path.to_string(),
             filter: HashMap::new(),
+            event_broadcast,
+            event_join_set: JoinSet::new(),
             poll_interval: 500,
-            on_file_received: Arc::new(|_,_| Box::pin(async {})),
         }
     }
 
@@ -46,6 +47,26 @@ impl FileReceiver {
         self
     }
 
+    pub fn on_event<T, Fut>(mut self, handler: T) -> Self
+    where
+        T: Fn(FileReceiverEventSignal) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let mut rx = self.event_broadcast.subscribe();
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
+        self.event_join_set.spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = sigterm.recv() => break,
+                    _ = sigint.recv() => break,
+                    event = rx.recv() => handler(event.unwrap()).await,
+                }
+            }
+        });
+        self
+    }
+
     pub async fn start(self) {
         let path = Path::new(&self.path);
         match &path.try_exists() {
@@ -54,12 +75,10 @@ impl FileReceiver {
             Err(err) => panic!("{}", err.to_string()),
         }
 
-        let mut main_join_set = JoinSet::new();
-        let mut callback_join_set = JoinSet::new();
-
+        let mut join_set = JoinSet::new();
         let mut interval = tokio::time::interval(Duration::from_millis(self.poll_interval));
-        let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
         let ignore_list = Arc::new(Mutex::new(Vec::<String>::new()));
         let filter_map = Arc::new(self.filter.clone());
         
@@ -92,15 +111,10 @@ impl FileReceiver {
                                 let ignore_list = Arc::clone(&ignore_list);
                                 let file_path = Arc::new(file_path.to_path_buf());
                                 let tracking = TrackingInfo::new().uuid(Uuid::new_v4().to_string());
+                                let event_broadcast = Arc::new(self.event_broadcast.clone());
                             
-                                let file_path_clone = file_path.clone();
-                                let tracking_clone = tracking.clone();
-                                let on_file_received = Arc::clone(&self.on_file_received);
-                                callback_join_set.spawn(async move {
-                                    on_file_received(tracking_clone, file_path_clone.to_path_buf()).await;
-                                });
-                                
-                                main_join_set.spawn(async move {
+                                event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file_path.to_path_buf())).ok();
+                                join_set.spawn(async move {
                                     callback(tracking, file_path.to_path_buf()).await;
                                     let mut unlocked_list = ignore_list.lock().await;
                                     if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
@@ -116,8 +130,7 @@ impl FileReceiver {
             }
         }
 
-        while let Some(_) = main_join_set.join_next().await {}
-        while let Some(_) = callback_join_set.join_next().await {}
+        while let Some(_) = join_set.join_next().await {}
     }
 
     async fn get_files_in_directory(path: &Path) -> tokio::io::Result<Vec<PathBuf>> {
@@ -132,14 +145,5 @@ impl FileReceiver {
         }
 
         Ok(files)
-    }
-
-    pub fn on_file_received<T, Fut>(mut self, callback: T) -> Self
-    where
-        T: Fn(TrackingInfo, PathBuf) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.on_file_received = Arc::new(move |tracking, path| Box::pin(callback(tracking, path)));
-        self
     }
 }
