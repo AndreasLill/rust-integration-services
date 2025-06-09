@@ -10,6 +10,7 @@ pub struct HttpRequest {
     pub protocol: String,
     pub headers: HashMap<String, String>,
     pub body: String,
+    pub ip: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -21,6 +22,7 @@ impl HttpRequest {
             protocol: String::from("HTTP/1.1"),
             headers: HashMap::new(),
             body: String::new(),
+            ip: None,
         }
     }
 
@@ -53,6 +55,11 @@ impl HttpRequest {
 
     pub fn method(mut self, method: &str) -> Self {
         self.method = method.to_uppercase();
+        self
+    }
+
+    pub fn ip(mut self, ip: String) -> Self {
+        self.ip = Some(ip);
         self
     }
 
@@ -106,6 +113,7 @@ impl HttpRequest {
             protocol: String::from(protocol),
             headers: headers,
             body: body,
+            ip: None,
         })
     }
 }

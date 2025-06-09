@@ -17,21 +17,21 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use super::http_tracking::HttpTracking;
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
 pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncStream for T {}
 
-type RouteCallback = Arc<dyn Fn(HttpTracking, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type RouteCallback = Arc<dyn Fn(String, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum HttpReceiverEventSignal {
-    OnRequestSuccess(HttpTracking, HttpRequest),
-    OnRequestError(HttpTracking, String),
-    OnResponseSuccess(HttpTracking, HttpResponse),
-    OnResponseError(HttpTracking, String),
+    OnConnectionReceived(String, String),
+    OnRequestSuccess(String, HttpRequest),
+    OnRequestError(String, String),
+    OnResponseSuccess(String, HttpResponse),
+    OnResponseError(String, String),
 }
 
 pub struct TlsConfig {
@@ -65,10 +65,10 @@ impl HttpReceiver {
 
     pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
     where
-        T: Fn(HttpTracking, HttpRequest) -> Fut + Send + Sync + 'static,
+        T: Fn(String, HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
-        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |tracking, request| Box::pin(callback(tracking, request))));
+        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |uuid, request| Box::pin(callback(uuid, request))));
         self
     }
 
@@ -88,6 +88,7 @@ impl HttpReceiver {
         let mut receiver = self.event_receiver.unwrap();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
+        
         self.event_join_set.spawn(async move {
             loop {
                 tokio::select! {
@@ -133,23 +134,20 @@ impl HttpReceiver {
                     let routes = Arc::clone(&routes);
                     let event_broadcast = Arc::new(self.event_broadcast.clone());
                     let tls_acceptor = tls_acceptor.clone();
-                    let tracking = HttpTracking {
-                        uuid: Uuid::new_v4().to_string(),
-                        ip: client_addr.ip().to_string(),
-                    };
-                    
+                    let uuid = Uuid::new_v4().to_string();
+
+                    event_broadcast.send(HttpReceiverEventSignal::OnConnectionReceived(uuid.clone(), client_addr.ip().to_string())).await.unwrap();
                     join_set_main.spawn(async move {
                         let mut stream: Box<dyn AsyncStream> = match tls_acceptor {
                             Some(acceptor) => {
                                 match Self::is_connection_tls(&stream).await {
                                     Ok(_) => {},
                                     Err(err) => {
-                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).await.unwrap();
-                                        //on_request_error(tracking.clone(), err.to_string()).await;
+                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(uuid.clone(), err.to_string())).await.unwrap();
                                         let response = HttpResponse::internal_server_error();
                                         match stream.write_all(&response.to_bytes()).await {
-                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
-                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
+                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
+                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
                                         };
                                         return;
                                     },
@@ -159,12 +157,11 @@ impl HttpReceiver {
                                     Ok(tls_stream) => Box::new(tls_stream),
                                     Err(err) => {
                                         let err = format!("TLS handshake failed: {}", err.to_string());
-                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).await.unwrap();
-                                        //on_request_error(tracking.clone(), err.to_string()).await;
+                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(uuid.clone(), err.to_string())).await.unwrap();
                                         let response = HttpResponse::internal_server_error();
                                         match stream.write_all(&response.to_bytes()).await {
-                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
-                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
+                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
+                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
                                         };
                                         return;
                                     },
@@ -174,14 +171,13 @@ impl HttpReceiver {
                         };
 
                         let request = match HttpRequest::from_stream(&mut stream).await {
-                            Ok(req) => req,
+                            Ok(request) => request.ip(client_addr.ip().to_string()),
                             Err(err) => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(tracking.clone(), err.to_string())).await.unwrap();
-                                //on_request_error(tracking.clone(), err.to_string()).await;
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(uuid.clone(), err.to_string())).await.unwrap();
                                 let response = HttpResponse::internal_server_error();
                                 match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
+                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
+                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
                                 };
                                 return;
                             }
@@ -189,24 +185,22 @@ impl HttpReceiver {
 
                         match routes.get(&format!("{}|{}", &request.method, &request.path)) {
                             None => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).await.unwrap();
-                                //on_request_success(tracking.clone(), request.clone()).await;
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(uuid.clone(), request.clone())).await.unwrap();
                                 let response = HttpResponse::not_found();
                                 match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
+                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
+                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
                                 };
                             },
                             Some(callback) => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(tracking.clone(), request.clone())).await.unwrap();
-                                //on_request_success(tracking.clone(), request.clone()).await;
-                                let mut response = callback(tracking.clone(), request).await;
+                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(uuid.clone(), request.clone())).await.unwrap();
+                                let mut response = callback(uuid.clone(), request).await;
                                 if !response.body.is_empty() {
                                     response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
                                 }
                                 match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(tracking.clone(), response.clone())).await.unwrap(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(tracking.clone(), err.to_string())).await.unwrap(),
+                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
+                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
                                 };
                             }
                         }

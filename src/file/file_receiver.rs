@@ -3,13 +3,11 @@ use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::{mpsc, Mutex}, task::JoinSet};
 use uuid::Uuid;
 
-use crate::file::file_tracking::FileTracking;
-
-type FileCallback = Arc<dyn Fn(FileTracking, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum FileReceiverEventSignal {
-    OnFileReceived(FileTracking, PathBuf),
+    OnFileReceived(String, PathBuf),
 }
 
 pub struct FileReceiver {
@@ -41,11 +39,11 @@ impl FileReceiver {
 
     pub fn filter<T, Fut>(mut self, filter: &str, callback: T) -> Self 
     where
-        T: Fn(FileTracking, PathBuf) -> Fut + Send + Sync + 'static,
+        T: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         Regex::new(filter).expect("Invalid Regex!");
-        self.filter.insert(filter.to_string(), Arc::new(move |tracking, path| Box::pin(callback(tracking, path))));
+        self.filter.insert(filter.to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
         self
     }
 
@@ -57,6 +55,7 @@ impl FileReceiver {
         let mut receiver = self.event_receiver.unwrap();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
+        
         self.event_join_set.spawn(async move {
             loop {
                 tokio::select! {
@@ -119,13 +118,11 @@ impl FileReceiver {
                                 let callback = Arc::clone(&callback);
                                 let ignore_list = Arc::clone(&ignore_list);
                                 let file_path = Arc::new(file_path.to_path_buf());
-                                let tracking = FileTracking {
-                                    uuid: Uuid::new_v4().to_string(),
-                                };
+                                let uuid = Uuid::new_v4().to_string();
                             
-                                self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(tracking.clone(), file_path.to_path_buf())).await.unwrap();
+                                self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
                                 join_set.spawn(async move {
-                                    callback(tracking, file_path.to_path_buf()).await;
+                                    callback(uuid, file_path.to_path_buf()).await;
                                     let mut unlocked_list = ignore_list.lock().await;
                                     if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
                                         unlocked_list.remove(pos);

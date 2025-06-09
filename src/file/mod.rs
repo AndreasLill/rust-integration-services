@@ -1,6 +1,4 @@
 #[cfg(feature = "file")]
-pub mod file_tracking;
-#[cfg(feature = "file")]
 pub mod file_receiver;
 #[cfg(feature = "file")]
 pub mod file_sender;
