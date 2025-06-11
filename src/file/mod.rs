@@ -22,12 +22,11 @@ mod test {
     #[tokio::test(start_paused = true)]
     async fn file_receiver() {
         FileReceiver::new("./test/file/in")
-        .poll_interval(500)
         .filter(r"^[^\.]+?\.[^\.]+$", async move |_, path| {
             let target_path = &format!("./test/file/out/{}", path.file_name().unwrap().to_str().unwrap());
             let source_path = path.to_str().unwrap();
             FileSender::new().copy_file(source_path, target_path).await.unwrap();
         })
-        .start().await;
+        .run_once().await;
     }
 }
