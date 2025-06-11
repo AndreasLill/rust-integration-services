@@ -108,7 +108,7 @@ impl HttpReceiver {
         self
     }
 
-    pub async fn start(mut self) {
+    pub async fn run(mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         let listener = TcpListener::bind(&addr).await.unwrap();
 

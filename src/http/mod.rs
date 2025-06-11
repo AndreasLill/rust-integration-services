@@ -20,7 +20,7 @@ mod test {
                 HttpResponse::ok().body("Text")
             });
 
-        tokio::spawn(receiver.start());
+        tokio::spawn(receiver.run());
         tokio::time::advance(Duration::from_millis(100)).await;
         let request = HttpRequest::get();
         let response = HttpSender::new("http://127.0.0.1:7878").send(request).await.unwrap();
