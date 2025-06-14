@@ -1,6 +1,6 @@
-use std::{path::Path, pin::Pin, sync::Arc};
-use chrono::{Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, NaiveTime};
-use tokio::{fs::OpenOptions, io::{AsyncReadExt, AsyncWriteExt}, signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
+use std::{pin::Pin, sync::Arc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, NaiveTime};
+use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 use uuid::Uuid;
 
 use super::schedule_interval::ScheduleInterval;
@@ -11,7 +11,6 @@ pub struct ScheduleReceiver {
     interval: ScheduleInterval,
     next_run: NaiveDateTime,
     on_trigger: TriggerCallback,
-    state_file: Option<String>,
 }
 
 impl ScheduleReceiver {
@@ -20,19 +19,12 @@ impl ScheduleReceiver {
             interval: ScheduleInterval::None,
             next_run: Local::now().naive_local(),
             on_trigger: Arc::new(|_| Box::pin(async {})),
-            state_file: None,
         }
     }
-
-    /// Save and load the state by file, if the file does not exist it will be created.
-    pub fn state_file(mut self, file_path: &str) -> Self {
-        self.state_file = Some(file_path.to_string());
-        self
-    }
     
-    /// Sets the start date of the first run.
+    /// Sets the start date for the scheduled task.
     /// 
-    /// Will be ignored if state file already contains a previous saved state.
+    /// If the provided date is in the past, the scheduler will calculate the next valid future run based on the defined interval.
     pub fn start_date(mut self, year: i32, month: u32, day: u32) -> Self {
         let date = NaiveDate::from_ymd_opt(year, month, day).expect("Not a valid date.");
         let time = self.next_run.time();
@@ -40,9 +32,9 @@ impl ScheduleReceiver {
         self
     }
     
-    /// Sets the start time of the first run.
+    /// Sets the start time for the scheduled task.
     /// 
-    /// Will be ignored if state file already contains a previous saved state.
+    /// If the provided time is in the past, the scheduler will calculate the next valid future run based on the defined interval.
     pub fn start_time(mut self, hour: u32, minute: u32, second: u32) -> Self {
         let date = self.next_run.date();
         let time = NaiveTime::from_hms_opt(hour, minute, second).expect("Not a valid time.");
@@ -71,54 +63,29 @@ impl ScheduleReceiver {
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
 
-        let state_file = self.state_file.clone();
-        if let Some(path) = state_file {
-            match Self::load_state(&path, self.next_run).await {
-                Ok(date_time) => {
-                    let now = Local::now().naive_local();
-                    if now > date_time {
-                        self.next_run = now;
-                    }
-                    else {
-                        self.next_run = date_time;
-                    }
-                },
-                Err(err) => panic!("Error loading state from file: {}", err.to_string()),
-            }
+        let now_comp = DateTime::from_timestamp(Local::now().naive_local().and_utc().timestamp(), 0).unwrap();
+        let next_run_comp = DateTime::from_timestamp(self.next_run.and_utc().timestamp(), 0).unwrap();
+        if next_run_comp < now_comp {
+            self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
+            println!("Next run: {}", self.next_run);
         }
 
-        let state_file = Arc::new(self.state_file);
         join_set.spawn(async move {
             loop {
                 let now = Local::now().naive_local();
-                
-                match (self.next_run - now).to_std() {
-                    Ok(duration_until_target) => sleep(duration_until_target).await,
-                    Err(_) => {},
+                if let Ok(duration) = (self.next_run - now).to_std() {
+                    sleep(duration).await;
                 }
 
                 let uuid = Uuid::new_v4().to_string();
                 (self.on_trigger)(uuid).await;
 
-                match self.interval {
-                    ScheduleInterval::None => break,
-                    ScheduleInterval::Seconds(seconds) => {
-                        self.next_run += ChronoDuration::seconds(seconds);
-                    },
-                    ScheduleInterval::Minutes(minutes) => {
-                        self.next_run += ChronoDuration::minutes(minutes);
-                    },
-                    ScheduleInterval::Hours(hours) => {
-                        self.next_run += ChronoDuration::hours(hours);
-                    },
-                    ScheduleInterval::Days(days) => {
-                        self.next_run += ChronoDuration::days(days);
-                    },
+                if self.interval == ScheduleInterval::None {
+                    break;
                 }
 
-                if let Some(path) = state_file.as_ref() {
-                    Self::save_state(&path, self.next_run).await.ok();
-                }
+                self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
+                println!("Next run: {}", self.next_run);
             }
         });
 
@@ -142,25 +109,24 @@ impl ScheduleReceiver {
         }
     }
 
-    async fn save_state(path: &str, datetime: NaiveDateTime) -> tokio::io::Result<()> {
-        let path = Path::new(path);
-        let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(path).await?;
-        let data = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
-        file.write_all(data.as_bytes()).await?;
+    async fn calculate_next_run(next_run: NaiveDateTime, interval: ScheduleInterval) -> NaiveDateTime {
+        let now = Local::now().naive_local();
 
-        Ok(())
-    }
-
-    async fn load_state(path: &str, current: NaiveDateTime) -> tokio::io::Result<NaiveDateTime> {
-        let path = Path::new(path);
-        let mut file = OpenOptions::new().create(true).write(true).read(true).open(path).await?;
-        let mut data = String::new();
-        file.read_to_string(&mut data).await?;
-
-        let date_time = match NaiveDateTime::parse_from_str(&data.trim(), "%Y-%m-%d %H:%M:%S") {
-            Ok(data) => data,
-            Err(_) => current,
+        let interval_duration = match interval {
+            ScheduleInterval::None => return next_run,
+            ScheduleInterval::Seconds(seconds) => ChronoDuration::seconds(seconds),
+            ScheduleInterval::Minutes(minutes) => ChronoDuration::minutes(minutes),
+            ScheduleInterval::Hours(hours) => ChronoDuration::hours(hours),
+            ScheduleInterval::Days(days) => ChronoDuration::days(days),
         };
-        Ok(date_time)
+
+        let mut calculated_next_run = next_run.clone();
+        if interval_duration != ChronoDuration::zero() {
+            while calculated_next_run < now {
+                calculated_next_run += interval_duration;
+            }
+        }
+
+        calculated_next_run
     }
 }
