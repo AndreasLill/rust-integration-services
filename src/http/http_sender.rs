@@ -22,16 +22,15 @@ impl HttpSender {
         }
     }
 
-    /// Send a request to the url.
+    /// Send a request to the url.  
     /// 
-    /// Path and host header will be set automatically from the url.
+    /// Host header will be set automatically on the request from the url.
     pub async fn send(&mut self, mut request: HttpRequest) -> tokio::io::Result<HttpResponse> {
         let host = self.url.host_str().unwrap();
         let port = self.url.port_or_known_default().unwrap();
         let addr = format!("{}:{}", host, port);
         
-        request.headers.insert(String::from("Host"), String::from(host));
-        request.path = self.url.path().to_string();
+        request.headers.insert("Host".to_string(), host.to_string());
         
         match self.url.scheme() {
             "http" => {

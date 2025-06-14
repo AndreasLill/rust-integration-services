@@ -26,20 +26,32 @@ impl HttpRequest {
         }
     }
 
+    /// Builds a default GET request equal to:
+    /// 
+    /// HttpRequest::new().method("GET").path("/")
     pub fn get() -> Self {
-        HttpRequest::new().method("GET")
+        HttpRequest::new().method("GET").path("/")
     }
 
+    /// Builds a default POST request equal to:
+    /// 
+    /// HttpRequest::new().method("POST").path("/")
     pub fn post() -> Self {
-        HttpRequest::new().method("POST")
+        HttpRequest::new().method("POST").path("/")
     }
 
+    /// Builds a default PUT request equal to:
+    /// 
+    /// HttpRequest::new().method("PUT").path("/")
     pub fn put() -> Self {
-        HttpRequest::new().method("PUT")
+        HttpRequest::new().method("PUT").path("/")
     }
 
+    /// Builds a default DELETE request equal to:
+    /// 
+    /// HttpRequest::new().method("DELETE").path("/")
     pub fn delete() -> Self {
-        HttpRequest::new().method("DELETE")
+        HttpRequest::new().method("DELETE").path("/")
     }
 
     pub fn header(mut self, key: &str, value: &str) -> Self {
@@ -49,12 +61,17 @@ impl HttpRequest {
 
     pub fn body(mut self, body: &str) -> Self {
         self.body = body.to_string();
-        self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));
+        self.headers.insert("Content-Length".to_string(), body.len().to_string());
         self
     }
 
     pub fn method(mut self, method: &str) -> Self {
         self.method = method.to_uppercase();
+        self
+    }
+
+    pub fn path(mut self, path: &str) -> Self {
+        self.path = path.to_string();
         self
     }
 
