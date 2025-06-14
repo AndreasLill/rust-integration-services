@@ -49,8 +49,8 @@ FileSender::new()
 ``` rust
 ScheduleReceiver::new()
 .interval(ScheduleInterval::Hour(1))
-.on_trigger(async move || {
-    println!("Callback: Scheduled Task");
+.on_trigger(async move |uuid| {
+    println!("Callback: {}", uuid);
 })
 .run()
 .await;

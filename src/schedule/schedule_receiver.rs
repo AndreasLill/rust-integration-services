@@ -1,10 +1,11 @@
 use std::{pin::Pin, sync::Arc};
 use chrono::{Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
+use uuid::Uuid;
 
 use super::schedule_interval::ScheduleInterval;
 
-type TriggerCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type TriggerCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
@@ -17,7 +18,7 @@ impl ScheduleReceiver {
         ScheduleReceiver {
             interval: ScheduleInterval::None,
             next_run: Local::now().naive_local(),
-            on_trigger: Arc::new(|| Box::pin(async {})),
+            on_trigger: Arc::new(|_| Box::pin(async {})),
         }
     }
     
@@ -42,10 +43,10 @@ impl ScheduleReceiver {
 
     pub fn on_trigger<T, Fut>(mut self, callback: T) -> Self
     where
-        T: Fn() -> Fut + Send + Sync + 'static,
+        T: Fn(String) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.on_trigger = Arc::new(move || Box::pin(callback()));
+        self.on_trigger = Arc::new(move |uuid| Box::pin(callback(uuid)));
         self
     }
 
@@ -63,7 +64,8 @@ impl ScheduleReceiver {
                     Err(_) => {},
                 }
 
-                (self.on_trigger)().await;
+                let uuid = Uuid::new_v4().to_string();
+                (self.on_trigger)(uuid).await;
 
                 match self.interval {
                     ScheduleInterval::None => break,
