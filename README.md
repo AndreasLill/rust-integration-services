@@ -23,25 +23,33 @@ FileReceiver::new("./io/in/")
 .run_polling(500)
 .await;
 ```
-
+---
 #### FileSender
 
 >Example: Move a file from one directory to another.
 ``` rust
-FileSender::new()
-.move_file("./io/in/file.txt", "./io/out/file.txt")
+FileSender::new("./io/out/file.txt")
+.move_from("./io/in/file.txt")
 .await
 .unwrap();
 ```
-
+---
+>Example: Copy the contents from a file to another.
+``` rust
+FileSender::new("./io/out/file.txt")
+.copy_from("./io/in/file.txt")
+.await
+.unwrap();
+```
+---
 >Example: Write a string to a file.
 ``` rust
-FileSender::new()
-.write_string("text", "./io/out/file.txt")
+FileSender::new("./io/out/file.txt")
+.write_string("text")
 .await
 .unwrap();
 ```
-
+---
 ### Schedule
 #### ScheduleReceiver
 
@@ -55,7 +63,7 @@ ScheduleReceiver::new()
 .run()
 .await;
 ```
-
+---
 ### HTTP
 #### HttpReceiver
 
@@ -71,7 +79,7 @@ HttpReceiver::new("127.0.0.1", 8080)
 .run()
 .await;
 ```
-
+---
 #### HttpSender
 
 >Example: Send a HTTP GET request to 127.0.0.1:8080.
@@ -81,7 +89,7 @@ HttpSender::new("127.0.0.1:8080")
 .await
 .unwrap();
 ```
-
+---
 ### SFTP (Coming soon)
 ### SMTP (Coming soon)
 ### SSH (Coming soon)

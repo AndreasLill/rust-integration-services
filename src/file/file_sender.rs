@@ -7,57 +7,65 @@ const NEW_LINE: &[u8] = b"\r\n";
 const NEW_LINE: &[u8] = b"\n";
 
 pub struct FileSender {
-    append: bool,
-    append_new_line: bool,
+    overwrite: bool,
+    target_path: String,
 }
 
 impl FileSender {
-    pub fn new() -> Self {
+    /// Builds a new FileSender with the full path to the target file.
+    /// 
+    /// If the file does not exist, it will be created.
+    pub fn new(target_path: &str) -> Self {
         FileSender  { 
-            append: false,
-            append_new_line: false,
+            overwrite: false,
+            target_path: target_path.to_string(),
         }
     }
 
-    pub fn append(mut self, append: bool) -> Self {
-        self.append = append;
+    /// This will overwrite the contents of the target file.
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
         self
     }
 
-    pub fn append_new_line(mut self, new_line: bool) -> Self {
-        self.append_new_line = new_line;
-        self
-    }
+    /// Writes the bytes to the target file.
+    pub async fn write_bytes(self, bytes: &[u8]) -> tokio::io::Result<()> {
+        let path = Path::new(&self.target_path);
+        let mut file = OpenOptions::new().create(true).read(true).write(true).append(!self.overwrite).truncate(self.overwrite).open(path).await?;
 
-    pub async fn write_bytes(self, bytes: &[u8], target_path: &str) -> tokio::io::Result<()> {
-        let path = Path::new(target_path);
-        let mut file = OpenOptions::new().create(true).write(true).append(self.append).truncate(!self.append).open(path).await?;
+        if !self.overwrite {
+            let metadata = file.metadata().await?;
+            if metadata.len() > 0 {
+                file.write_all(NEW_LINE).await?;
+            }
+        }
+
         file.write_all(bytes).await?;
-
-        if self.append_new_line {
-            file.write_all(NEW_LINE).await?;
-        }
-
         Ok(())
     }
 
-    pub async fn write_string(self, string: &str, target_path: &str) -> tokio::io::Result<()> {
-        self.write_bytes(string.as_bytes(), target_path).await
+    /// Writes the string to the target file.
+    pub async fn write_string(self, string: &str) -> tokio::io::Result<()> {
+        self.write_bytes(string.as_bytes()).await
     }
 
-    pub async fn copy_file(self, source_path: &str, target_path: &str) -> tokio::io::Result<()> {
-        self.copy(source_path, target_path, false).await
+    /// Copy the contents of the source file to the target file.
+    pub async fn copy_from(mut self, source_path: &str) -> tokio::io::Result<()> {
+        self.overwrite = true;
+        self.copy(source_path, false).await
     }
 
-    pub async fn move_file(self, source_path: &str, target_path: &str) -> tokio::io::Result<()> {
-        self.copy(source_path, target_path, true).await
+    /// Copy the contents of the source file to the target file and delete the source file if successful.
+    pub async fn move_from(mut self, source_path: &str) -> tokio::io::Result<()> {
+        self.overwrite = true;
+        self.copy(source_path, true).await
     }
 
-    async fn copy(self, source_path: &str, target_path: &str, delete_file_on_success: bool) -> tokio::io::Result<()> {
+    async fn copy(self, source_path: &str, delete_file_on_success: bool) -> tokio::io::Result<()> {
         let source_path = Path::new(source_path);
-        let target_path = Path::new(target_path);
+        let target_path = Path::new(&self.target_path);
         let mut source = OpenOptions::new().read(true).open(source_path).await?;
-        let mut target = OpenOptions::new().create(true).write(true).append(self.append).truncate(!self.append).open(target_path).await?;
+        let mut target = OpenOptions::new().create(true).read(true).write(true).append(!self.overwrite).truncate(self.overwrite).open(target_path).await?;
         let mut buffer = vec![0u8; 1024 * 1024];
 
         loop {
@@ -68,10 +76,6 @@ impl FileSender {
             target.write_all(&buffer[..bytes]).await?;
         }
         target.flush().await?;
-
-        if self.append_new_line {
-            target.write_all(NEW_LINE).await?;
-        }
 
         if delete_file_on_success {
             drop(source);
