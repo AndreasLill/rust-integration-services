@@ -74,7 +74,15 @@ impl ScheduleReceiver {
         let state_file = self.state_file.clone();
         if let Some(path) = state_file {
             match Self::load_state(&path, self.next_run).await {
-                Ok(date_time) => self.next_run = date_time,
+                Ok(date_time) => {
+                    let now = Local::now().naive_local();
+                    if now > date_time {
+                        self.next_run = now;
+                    }
+                    else {
+                        self.next_run = date_time;
+                    }
+                },
                 Err(err) => panic!("Error loading state from file: {}", err.to_string()),
             }
         }
@@ -149,7 +157,7 @@ impl ScheduleReceiver {
         let mut data = String::new();
         file.read_to_string(&mut data).await?;
 
-        let date_time = match NaiveDateTime::parse_from_str(&data, "%Y-%m-%d %H:%M:%S") {
+        let date_time = match NaiveDateTime::parse_from_str(&data.trim(), "%Y-%m-%d %H:%M:%S") {
             Ok(data) => data,
             Err(_) => current,
         };
