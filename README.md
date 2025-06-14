@@ -16,14 +16,12 @@ rust-integration-services = { version = "0", features = ["http", "file", "schedu
 >Example: Poll the directory ./io/in/ every 500ms, and receive a callback with the path of a matching file using regular expression.
 
 ``` rust
-let handle = tokio::spawn(async move {
-    FileReceiver::new("./io/in/")
-    .filter(".*", async move |uuid, path| {
-        println!("Callback: {} - {}", uuid, path.to_string_lossy());
-    })
-    .run_polling(500)
-    .await;
-});
+FileReceiver::new("./io/in/")
+.filter(".*", async move |_uuid, path| {
+    println!("Callback: {}", path.to_string_lossy());
+})
+.run_polling(500)
+.await;
 ```
 
 #### FileSender
@@ -49,15 +47,13 @@ FileSender::new()
 
 >Example: Run a task once every hour.
 ``` rust
-let handle = tokio::spawn(async move {
-    ScheduleReceiver::new()
-    .interval(ScheduleInterval::Hour(1))
-    .on_trigger(async move || {
-        println!("Callback: Scheduled Task");
-    })
-    .run()
-    .await;
-});
+ScheduleReceiver::new()
+.interval(ScheduleInterval::Hour(1))
+.on_trigger(async move || {
+    println!("Callback: Scheduled Task");
+})
+.run()
+.await;
 ```
 
 ### HTTP
@@ -65,17 +61,15 @@ let handle = tokio::spawn(async move {
 
 >Example: Run a HTTP receiver listening on 127.0.0.1:8080 that handles GET and POST requests on the root path.
 ``` rust
-let handle = tokio::spawn(async move {
-    HttpReceiver::new("127.0.0.1", 8080)
-    .route("GET", "/", async move |_uuid, _request| {
-        HttpResponse::ok()
-    })
-    .route("POST", "/", async move |_uuid, _request| {
-        HttpResponse::ok()
-    })
-    .run()
-    .await;
-});
+HttpReceiver::new("127.0.0.1", 8080)
+.route("GET", "/", async move |_uuid, _request| {
+    HttpResponse::ok()
+})
+.route("POST", "/", async move |_uuid, _request| {
+    HttpResponse::ok()
+})
+.run()
+.await;
 ```
 
 #### HttpSender
