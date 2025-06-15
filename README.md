@@ -57,8 +57,10 @@ FileSender::new("./io/out/file.txt")
 ``` rust
 ScheduleReceiver::new()
 .interval(ScheduleInterval::Hour(1))
-.on_trigger(async move |uuid| {
-    println!("Callback: {}", uuid);
+.on_event(async move |event| {
+    match event {
+        ScheduleReceiverEventSignal::OnTrigger(uuid) => println!("{}", uuid),
+    }
 })
 .run()
 .await;
