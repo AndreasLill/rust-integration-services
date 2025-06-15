@@ -146,10 +146,8 @@ impl ScheduleReceiver {
         };
 
         let mut calculated_next_run = next_run.clone();
-        if interval_duration != ChronoDuration::zero() {
-            while calculated_next_run < now {
-                calculated_next_run += interval_duration;
-            }
+        while calculated_next_run < now {
+            calculated_next_run += interval_duration;
         }
 
         calculated_next_run
