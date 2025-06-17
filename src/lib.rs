@@ -4,3 +4,5 @@ pub mod http;
 pub mod file;
 #[cfg(feature = "schedule")]
 pub mod schedule;
+#[cfg(feature = "sftp")]
+pub mod sftp;

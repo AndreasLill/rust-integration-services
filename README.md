@@ -6,14 +6,14 @@ A modern, fast, and lightweight integration library written in Rust, designed fo
 
 ``` toml
 [dependencies]
-rust-integration-services = { version = "0", features = ["http", "file", "schedule"] }
+rust-integration-services = { version = "0", features = ["http", "file", "schedule", "sftp"] }
 ```
 
 ## Features
 ### File
 #### FileReceiver
 
->Example: Poll the directory ./io/in/ every 500ms, and receive a callback with the path of a matching file using regular expression.
+Poll the directory `./io/in/` every 500 milliseconds, and receive a callback with the path of a matching file using regular expression.
 
 ``` rust
 FileReceiver::new("./io/in/")
@@ -23,37 +23,34 @@ FileReceiver::new("./io/in/")
 .run_polling(500)
 .await;
 ```
----
+
 #### FileSender
 
->Example: Move a file from one directory to another.
+Move a file from one directory to another.
 ``` rust
-FileSender::new("./io/out/file.txt")
+let result = FileSender::new("./io/out/file.txt")
 .move_from("./io/in/file.txt")
-.await
-.unwrap();
+.await;
 ```
----
->Example: Copy the contents from a file to another.
+
+Copy the contents from a file to another.
 ``` rust
-FileSender::new("./io/out/file.txt")
+let result = FileSender::new("./io/out/file.txt")
 .copy_from("./io/in/file.txt")
-.await
-.unwrap();
+.await;
 ```
----
->Example: Write a string to a file.
+
+Write a string to a file.
 ``` rust
-FileSender::new("./io/out/file.txt")
+let result = FileSender::new("./io/out/file.txt")
 .write_string("text")
-.await
-.unwrap();
+.await;
 ```
 ---
 ### Schedule
 #### ScheduleReceiver
 
->Example: Run a task once every hour.
+Run a task once every hour and receive an event when it triggers.
 ``` rust
 ScheduleReceiver::new()
 .interval(ScheduleInterval::Hour(1))
@@ -69,7 +66,7 @@ ScheduleReceiver::new()
 ### HTTP
 #### HttpReceiver
 
->Example: Run a HTTP receiver listening on 127.0.0.1:8080 that handles GET and POST requests on the root path.
+Run a HTTP receiver listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path.
 ``` rust
 HttpReceiver::new("127.0.0.1", 8080)
 .route("GET", "/", async move |_uuid, _request| {
@@ -81,17 +78,34 @@ HttpReceiver::new("127.0.0.1", 8080)
 .run()
 .await;
 ```
----
+
 #### HttpSender
 
->Example: Send a HTTP GET request to 127.0.0.1:8080.
+Send a HTTP GET request to `127.0.0.1:8080`.
 ``` rust
-HttpSender::new("127.0.0.1:8080")
+let response = HttpSender::new("127.0.0.1:8080")
 .send(HttpRequest::get())
 .await
 .unwrap();
 ```
 ---
-### SFTP (Coming soon)
-### SMTP (Coming soon)
-### SSH (Coming soon)
+
+### SFTP
+
+Using SFTP requires `openssl` to be installed on the system.  
+Make sure you also have the development packages of openssl installed.
+For example, `libssl-dev` on Ubuntu or `openssl-devel` on Fedora.
+
+#### SftpSender
+
+Send a file to `127.0.0.1:22` remote directory `upload` keeping the same file name.  
+Authentication is a private key with a passphrase.
+
+``` rust
+let result = SftpSender::new("127.0.0.1:22", "user")
+.auth_private_key("/home/user/.ssh/id_rsa", "secret")
+.remote_dir("upload")
+.send_file("/home/user/files/data.txt")
+.await
+.unwrap();
+```
