@@ -99,13 +99,24 @@ For example, `libssl-dev` on Ubuntu or `openssl-devel` on Fedora.
 #### SftpSender
 
 Send a file to `127.0.0.1:22` remote directory `upload` keeping the same file name.  
-Authentication is a private key with a passphrase.
+A private key with a passphrase is used as authentication in this example.
 
 ``` rust
 let result = SftpSender::new("127.0.0.1:22", "user")
 .auth_private_key("/home/user/.ssh/id_rsa", "secret")
 .remote_dir("upload")
 .send_file("/home/user/files/data.txt")
-.await
-.unwrap();
+.await;
+```
+
+Send a string as a file to `127.0.0.1:22` remote directory `upload` with a new file name.  
+A basic password is used as authentication in this example.
+
+``` rust
+let result = SftpSender::new("127.0.0.1:2222", "user")
+.auth_password("secret")
+.remote_dir("upload")
+.file_name("data.txt")
+.send_string("a very beautiful important string")
+.await;
 ```

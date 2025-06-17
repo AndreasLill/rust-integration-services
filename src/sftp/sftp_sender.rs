@@ -7,7 +7,7 @@ use tokio::{fs::OpenOptions, io::AsyncReadExt};
 pub struct SftpSender {
     host: String,
     remote_dir: String,
-    target_name: String,
+    file_name: String,
     auth_username: String,
     auth_password: String,
     auth_private_key: String,
@@ -19,7 +19,7 @@ impl SftpSender {
         SftpSender { 
             host: host.to_string(),
             remote_dir: String::new(),
-            target_name: String::new(),
+            file_name: String::new(),
             auth_username: user.to_string(),
             auth_password: String::new(),
             auth_private_key: String::new(),
@@ -47,12 +47,13 @@ impl SftpSender {
     }
 
     /// Sets a new file name for the sent file.
-    pub fn target_name(mut self, target_name: &str) -> Self {
-        self.target_name = target_name.to_string();
+    pub fn file_name(mut self, file_name: &str) -> Self {
+        self.file_name = file_name.to_string();
         self
     }
 
-    /// Send a file to the SFTP server.
+    /// Send a file using streaming with a buffer to support large file sizes.
+    /// The original file name will be used unless a new file name is specified.
     pub async fn send_file(self, source_path: &str) -> tokio::io::Result<()> {
         let source_path = Path::new(source_path);
         match &source_path.try_exists() {
@@ -71,22 +72,60 @@ impl SftpSender {
             let private_key_path = Path::new(&self.auth_private_key);
             session.userauth_pubkey_file(&self.auth_username, None, private_key_path, Some(&self.auth_private_key_passphrase)).await?;
         }
-
-        let mut file = OpenOptions::new().read(true).open(source_path).await?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).await?;
         
         let mut target_name = source_path.file_name().unwrap().to_str().unwrap();
-        if !self.target_name.is_empty() {
-            target_name = &self.target_name;
+        if !self.file_name.is_empty() {
+            target_name = &self.file_name;
         }
         let remote_path = Path::new(&self.remote_dir).join(target_name);
         
         let sftp = session.sftp().await?;
-        let mut remote = sftp.create(&remote_path).await?;
-        remote.write_all(&buffer).await?;
-        remote.close().await?;
+        let mut remote_file = sftp.create(&remote_path).await?;
+        let mut source_file = OpenOptions::new().read(true).open(source_path).await?;
+        let mut buffer = vec![0u8; 1024 * 1024];
+
+        loop {
+            let bytes = source_file.read(&mut buffer).await?;
+            if bytes == 0 {
+                break;
+            }
+            remote_file.write_all(&buffer[..bytes]).await?;
+        }
+
+        remote_file.flush().await?;
+        remote_file.close().await?;
 
         Ok(())
+    }
+
+    /// Send bytes as a new file on the sftp server. A new file name is required.
+    pub async fn send_bytes(self, bytes: &[u8]) -> tokio::io::Result<()> {
+        if self.file_name.is_empty() {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("A file name is required!")));
+        }
+
+        let tcp = TokioTcpStream::connect(&self.host).await?;
+        let mut session = AsyncSession::new(tcp, SessionConfiguration::default())?;
+        session.handshake().await?;
+        if !self.auth_password.is_empty() {
+            session.userauth_password(&self.auth_username, &self.auth_password).await?;
+        }
+        if !self.auth_private_key.is_empty() {
+            let private_key_path = Path::new(&self.auth_private_key);
+            session.userauth_pubkey_file(&self.auth_username, None, private_key_path, Some(&self.auth_private_key_passphrase)).await?;
+        }
+
+        let remote_path = Path::new(&self.remote_dir).join(self.file_name);
+        let sftp = session.sftp().await?;
+        let mut remote_file = sftp.create(&remote_path).await?;
+        remote_file.write_all(bytes).await?;
+        remote_file.close().await?;
+
+        Ok(())
+    }
+
+    /// Send a string as a new file on the sftp server. A new file name is required.
+    pub async fn send_string(self, string: &str) -> tokio::io::Result<()> {
+        self.send_bytes(string.as_bytes()).await
     }
 }
