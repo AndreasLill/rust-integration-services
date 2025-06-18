@@ -96,9 +96,29 @@ Using SFTP requires `openssl` to be installed on the system.
 Make sure you also have the development packages of openssl installed.
 For example, `libssl-dev` on Ubuntu or `openssl-devel` on Fedora.
 
+#### SftpReceiver
+
+Download all files from `127.0.0.1:22` user remote directory `upload` and delete files after successful download.  
+Using `on_event` callback to print on download start and success.  
+That way files can be processed asyncronously without blocking other downloads.
+
+``` rust
+SftpReceiver::new("127.0.0.1:22", "user")
+.auth_password("pass")
+.remote_dir("upload")
+.delete_after(true)
+.on_event(async move |event| {
+    match event {
+        SftpReceiverEventSignal::OnDownloadStart(_uuid, path) => println!("Download started: {:?}", path),
+        SftpReceiverEventSignal::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
+    }
+})
+.download_files("/home/user/files").await;
+```
+
 #### SftpSender
 
-Send a file to `127.0.0.1:22` remote directory `upload` keeping the same file name.  
+Send a file to `127.0.0.1:22` user remote directory `upload` keeping the same file name.  
 A private key with a passphrase is used as authentication in this example.
 
 ``` rust
@@ -109,11 +129,11 @@ let result = SftpSender::new("127.0.0.1:22", "user")
 .await;
 ```
 
-Send a string as a file to `127.0.0.1:22` remote directory `upload` with a new file name.  
+Send a string as a file to `127.0.0.1:22` user remote directory `upload` with a new file name.  
 A basic password is used as authentication in this example.
 
 ``` rust
-let result = SftpSender::new("127.0.0.1:2222", "user")
+let result = SftpSender::new("127.0.0.1:22", "user")
 .auth_password("secret")
 .remote_dir("upload")
 .file_name("data.txt")
