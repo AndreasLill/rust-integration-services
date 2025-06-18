@@ -20,7 +20,7 @@ FileReceiver::new("./io/in/")
 .filter(".*", async move |_uuid, path| {
     println!("Callback: {}", path.to_string_lossy());
 })
-.run_polling(500)
+.poll_directory(500)
 .await;
 ```
 

@@ -21,12 +21,11 @@ mod test {
 
     #[tokio::test(start_paused = true)]
     async fn file_receiver() {
-        FileReceiver::new("./test/file/in")
-        .filter(r"^[^\.]+?\.[^\.]+$", async move |_, path| {
-            let target_path = &format!("./test/file/out/{}", path.file_name().unwrap().to_str().unwrap());
-            let source_path = path.to_str().unwrap();
-            FileSender::new(target_path).overwrite(true).copy_from(source_path).await.unwrap();
+        let result = FileReceiver::new("./test/file/in")
+        .filter(r"^.+\.[^./\\]+$", async move |_uuid, _path| {
         })
-        .run_once().await;
+        .read_directory()
+        .await;
+        assert!(result.is_ok());
     }
 }

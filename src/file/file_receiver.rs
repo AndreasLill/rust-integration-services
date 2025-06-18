@@ -68,7 +68,7 @@ impl FileReceiver {
         self
     }
 
-    pub async fn run_once(self) {
+    pub async fn read_directory(mut self) -> tokio::io::Result<()> {
         let path = Path::new(&self.path);
         match &path.try_exists() {
             Ok(true) => {},
@@ -77,49 +77,35 @@ impl FileReceiver {
         }
 
         let mut join_set = JoinSet::new();
-        let ignore_list = Arc::new(Mutex::new(Vec::<String>::new()));
         let filter_map = Arc::new(self.filter.clone());
 
-        match Self::get_files_in_directory(&path).await {
-            Ok(files) => {
-                for (filter, callback) in filter_map.iter() {
-                    let regex = Regex::new(filter).unwrap();
+        let files = Self::get_files_in_directory(&path).await?;
+        for (filter, callback) in filter_map.iter() {
+            let regex = Regex::new(filter).unwrap();
 
-                    for file_path in &files {
-                        let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
-                        
-                        if regex.is_match(&file_name) {
-                            let mut unlocked_list = ignore_list.lock().await;
-                            if unlocked_list.contains(&file_name) {
-                                continue;
-                            }
-                            unlocked_list.push(file_name.to_string());
-                            drop(unlocked_list);
-                            
-                            let callback = Arc::clone(&callback);
-                            let ignore_list = Arc::clone(&ignore_list);
-                            let file_path = Arc::new(file_path.to_path_buf());
-                            let uuid = Uuid::new_v4().to_string();
-                        
-                            self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
-                            join_set.spawn(async move {
-                                callback(uuid, file_path.to_path_buf()).await;
-                                let mut unlocked_list = ignore_list.lock().await;
-                                if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
-                                    unlocked_list.remove(pos);
-                                }
-                            });
-                        }
-                    }
+            for file_path in &files {
+                let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
+                
+                if regex.is_match(&file_name) {
+                    let callback = Arc::clone(&callback);
+                    let file_path = Arc::new(file_path.to_path_buf());
+                    let uuid = Uuid::new_v4().to_string();
+                
+                    self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
+                    join_set.spawn(async move {
+                        callback(uuid, file_path.to_path_buf()).await;
+                    });
                 }
-            },
-            Err(_) => {},
+            }
         }
 
         while let Some(_) = join_set.join_next().await {}
+        while let Some(_) = self.event_join_set.join_next().await {}
+
+        Ok(())
     }
 
-    pub async fn run_polling(self, interval: u64) {
+    pub async fn poll_directory(mut self, interval: u64) {
         let path = Path::new(&self.path);
         match &path.try_exists() {
             Ok(true) => {},
@@ -181,6 +167,7 @@ impl FileReceiver {
         }
 
         while let Some(_) = join_set.join_next().await {}
+        while let Some(_) = self.event_join_set.join_next().await {}
     }
 
     async fn get_files_in_directory(path: &Path) -> tokio::io::Result<Vec<PathBuf>> {
