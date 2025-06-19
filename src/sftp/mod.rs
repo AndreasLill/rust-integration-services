@@ -10,7 +10,7 @@ mod test {
     
     #[tokio::test(start_paused = true)]
     async fn sftp_receiver() {
-        let result = SftpReceiver::new("127.0.0.1:2222", "user").auth_password("pass").remote_dir("upload").download_files("./test/file/out").await;
+        let result = SftpReceiver::new("127.0.0.1:2222", "user").auth_password("pass").remote_dir("upload").receive_files("./test/file/out").await;
         assert!(result.is_ok());
     }
 

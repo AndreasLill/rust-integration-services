@@ -109,7 +109,7 @@ impl SftpReceiver {
     /// Download files from the sftp server to the target local path.
     /// 
     /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
-    pub async fn download_files(self, target_local_path: &str) -> tokio::io::Result<()> {
+    pub async fn receive_files(mut self, target_local_path: &str) -> tokio::io::Result<()> {
         let local_path = Path::new(target_local_path);
         match &local_path.try_exists() {
             Ok(true) => {},
@@ -168,6 +168,8 @@ impl SftpReceiver {
             }
         }
 
+        while let Some(_) = self.event_join_set.join_next().await {}
+        
         Ok(())
     }
 }

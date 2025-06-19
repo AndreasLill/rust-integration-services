@@ -113,7 +113,7 @@ SftpReceiver::new("127.0.0.1:22", "user")
         SftpReceiverEventSignal::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
     }
 })
-.download_files("/home/user/files").await;
+.receive_files("/home/user/files").await;
 ```
 
 #### SftpSender
