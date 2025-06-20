@@ -11,7 +11,6 @@ pub enum FileReceiverEventSignal {
 }
 
 pub struct FileReceiver {
-    path: String,
     filter: HashMap<String, FileCallback>,
     event_broadcast: mpsc::Sender<FileReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<FileReceiverEventSignal>>,
@@ -19,10 +18,9 @@ pub struct FileReceiver {
 }
 
 impl FileReceiver {
-    pub fn new(path: &str) -> Self {
+    pub fn new() -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         FileReceiver {
-            path: path.to_string(),
             filter: HashMap::new(),
             event_broadcast,
             event_receiver: Some(event_receiver),
@@ -30,6 +28,7 @@ impl FileReceiver {
         }
     }
 
+    /// Callback that returns all file paths from the filter using regular expression.
     pub fn filter<T, Fut>(mut self, filter: &str, callback: T) -> Self 
     where
         T: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
@@ -68,89 +67,75 @@ impl FileReceiver {
         self
     }
 
-    pub async fn receive_files(mut self) -> tokio::io::Result<()> {
-        let path = Path::new(&self.path);
-        if !path.try_exists()? {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{}' does not exist!", &self.path)));
+    pub async fn receive_polling(mut self, path: &str) -> tokio::io::Result<()> {
+        let dir_path = Path::new(path);
+        if !dir_path.try_exists()? {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", dir_path)));
         }
 
         let mut join_set = JoinSet::new();
-        let filter_map = Arc::new(self.filter.clone());
-
-        let files = Self::get_files_in_directory(&path).await?;
-        for (filter, callback) in filter_map.iter() {
-            let regex = Regex::new(filter).unwrap();
-
-            for file_path in &files {
-                let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
-                
-                if regex.is_match(&file_name) {
-                    let callback = Arc::clone(&callback);
-                    let file_path = Arc::new(file_path.to_path_buf());
-                    let uuid = Uuid::new_v4().to_string();
-                
-                    self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
-                    join_set.spawn(async move {
-                        callback(uuid, file_path.to_path_buf()).await;
-                    });
-                }
-            }
-        }
-
-        while let Some(_) = join_set.join_next().await {}
-        while let Some(_) = self.event_join_set.join_next().await {}
-
-        Ok(())
-    }
-
-    pub async fn receive_polling(mut self, interval: u64) -> tokio::io::Result<()> {
-        let path = Path::new(&self.path);
-        if !path.try_exists()? {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{}' does not exist!", &self.path)));
-        }
-
-        let mut join_set = JoinSet::new();
-        let mut interval = tokio::time::interval(Duration::from_millis(interval));
+        let mut interval = tokio::time::interval(Duration::from_millis(1500));
         let mut sigterm = signal(SignalKind::terminate())?;
         let mut sigint = signal(SignalKind::interrupt())?;
-        let ignore_list = Arc::new(Mutex::new(Vec::<String>::new()));
+        let lock_list = Arc::new(Mutex::new(Vec::<String>::new()));
         let filter_map = Arc::new(self.filter.clone());
+        let mut size_map = HashMap::<String, u64>::new();
         
         loop {
             tokio::select! {
                 _ = sigterm.recv() => break,
                 _ = sigint.recv() => break,
-                _ = async {
-                    match Self::get_files_in_directory(&path).await {
+                _ = async {} => {
+                    match Self::get_files_in_directory(&dir_path).await {
                         Ok(files) => {
                             for (filter, callback) in filter_map.iter() {
-                                let regex = Regex::new(filter).unwrap();
-                
                                 for file_path in &files {
                                     let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
                                     
-                                    if regex.is_match(&file_name) {
-                                        let mut unlocked_list = ignore_list.lock().await;
-                                        if unlocked_list.contains(&file_name) {
+                                    // Check if the filter regex matches the file.
+                                    let regex = Regex::new(filter).unwrap();
+                                    if !regex.is_match(&file_name) {
+                                        continue;
+                                    }
+                                    
+                                    // Check if the file is being copied by comparing the current size with the previous polling size.
+                                    let file_path_str = file_path.to_str().unwrap().to_string();
+                                    let size = tokio::fs::metadata(file_path).await.unwrap().len();
+                                    match size_map.get_mut(&file_path_str) {
+                                        Some(old_size) => {
+                                            if size > *old_size {
+                                                *old_size = size;
+                                                continue;
+                                            }
+                                            size_map.remove(&file_path_str);
+                                        }
+                                        None => {
+                                            size_map.insert(file_path_str, size);
                                             continue;
                                         }
-                                        unlocked_list.push(file_name.to_string());
-                                        drop(unlocked_list);
-                                        
-                                        let callback = Arc::clone(&callback);
-                                        let ignore_list = Arc::clone(&ignore_list);
-                                        let file_path = Arc::new(file_path.to_path_buf());
-                                        let uuid = Uuid::new_v4().to_string();
-                                    
-                                        self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
-                                        join_set.spawn(async move {
-                                            callback(uuid, file_path.to_path_buf()).await;
-                                            let mut unlocked_list = ignore_list.lock().await;
-                                            if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
-                                                unlocked_list.remove(pos);
-                                            }
-                                        });
                                     }
+
+                                    // Add file to a locked list to avoid multiple tasks processing the same file.
+                                    let mut unlocked_list = lock_list.lock().await;
+                                    if unlocked_list.contains(&file_name) {
+                                        continue;
+                                    }
+                                    unlocked_list.push(file_name.to_string());
+                                    drop(unlocked_list);
+                                    
+                                    let callback = Arc::clone(&callback);
+                                    let lock_list = Arc::clone(&lock_list);
+                                    let file_path = Arc::new(file_path.to_path_buf());
+                                    let uuid = Uuid::new_v4().to_string();
+                                
+                                    self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
+                                    join_set.spawn(async move {
+                                        callback(uuid, file_path.to_path_buf()).await;
+                                        let mut unlocked_list = lock_list.lock().await;
+                                        if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
+                                            unlocked_list.remove(pos);
+                                        }
+                                    });
                                 }
                             }
                         },
@@ -158,7 +143,7 @@ impl FileReceiver {
                     }
 
                     interval.tick().await;
-                } => {}
+                }
             }
         }
 
