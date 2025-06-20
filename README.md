@@ -4,6 +4,8 @@ A modern, fast, and lightweight integration library written in Rust, designed fo
 
 ## Installation
 
+Add rust-integration-services to your project Cargo.toml and select features.
+
 ``` toml
 [dependencies]
 rust-integration-services = { version = "0", features = ["http", "file", "schedule", "sftp"] }
@@ -16,11 +18,11 @@ rust-integration-services = { version = "0", features = ["http", "file", "schedu
 Poll the directory `./io/in/` every 500 milliseconds, and receive a callback with the path of a matching file using regular expression.
 
 ``` rust
-FileReceiver::new("./io/in/")
+let result = FileReceiver::new("./io/in/")
 .filter(".*", async move |_uuid, path| {
-    println!("Callback: {}", path.to_string_lossy());
+    println!("Callback: {:?}", path);
 })
-.poll_directory(500)
+.receive_polling(500)
 .await;
 ```
 
@@ -29,21 +31,22 @@ FileReceiver::new("./io/in/")
 Move a file from one directory to another.
 ``` rust
 let result = FileSender::new("./io/out/file.txt")
-.move_from("./io/in/file.txt")
+.send_move("./io/in/file.txt")
 .await;
 ```
 
-Copy the contents from a file to another.
+Copy the contents from a file to another and overwrite target.
 ``` rust
 let result = FileSender::new("./io/out/file.txt")
-.copy_from("./io/in/file.txt")
+.overwrite(true)
+.send_copy("./io/in/file.txt")
 .await;
 ```
 
-Write a string to a file.
+Write a string to a file, appending the text.
 ``` rust
 let result = FileSender::new("./io/out/file.txt")
-.write_string("text")
+.send_string("text")
 .await;
 ```
 ---

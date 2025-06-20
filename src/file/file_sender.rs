@@ -29,7 +29,7 @@ impl FileSender {
     }
 
     /// Writes the bytes to the target file.
-    pub async fn write_bytes(self, bytes: &[u8]) -> tokio::io::Result<()> {
+    pub async fn send_bytes(self, bytes: &[u8]) -> tokio::io::Result<()> {
         let path = Path::new(&self.target_path);
         let mut file = OpenOptions::new().create(true).read(true).write(true).append(!self.overwrite).truncate(self.overwrite).open(path).await?;
 
@@ -45,18 +45,18 @@ impl FileSender {
     }
 
     /// Writes the string to the target file.
-    pub async fn write_string(self, string: &str) -> tokio::io::Result<()> {
-        self.write_bytes(string.as_bytes()).await
+    pub async fn send_string(self, string: &str) -> tokio::io::Result<()> {
+        self.send_bytes(string.as_bytes()).await
     }
 
     /// Copy the contents of the source file to the target file.
-    pub async fn copy_from(mut self, source_path: &str) -> tokio::io::Result<()> {
+    pub async fn send_copy(mut self, source_path: &str) -> tokio::io::Result<()> {
         self.overwrite = true;
         self.copy(source_path, false).await
     }
 
     /// Copy the contents of the source file to the target file and delete the source file if successful.
-    pub async fn move_from(mut self, source_path: &str) -> tokio::io::Result<()> {
+    pub async fn send_move(mut self, source_path: &str) -> tokio::io::Result<()> {
         self.overwrite = true;
         self.copy(source_path, true).await
     }

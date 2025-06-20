@@ -68,12 +68,10 @@ impl FileReceiver {
         self
     }
 
-    pub async fn read_directory(mut self) -> tokio::io::Result<()> {
+    pub async fn receive_files(mut self) -> tokio::io::Result<()> {
         let path = Path::new(&self.path);
-        match &path.try_exists() {
-            Ok(true) => {},
-            Ok(false) => panic!("The path '{}' does not exist!", &self.path),
-            Err(err) => panic!("{}", err.to_string()),
+        if !path.try_exists()? {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{}' does not exist!", &self.path)));
         }
 
         let mut join_set = JoinSet::new();
@@ -105,18 +103,16 @@ impl FileReceiver {
         Ok(())
     }
 
-    pub async fn poll_directory(mut self, interval: u64) {
+    pub async fn receive_polling(mut self, interval: u64) -> tokio::io::Result<()> {
         let path = Path::new(&self.path);
-        match &path.try_exists() {
-            Ok(true) => {},
-            Ok(false) => panic!("The path '{}' does not exist!", &self.path),
-            Err(err) => panic!("{}", err.to_string()),
+        if !path.try_exists()? {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{}' does not exist!", &self.path)));
         }
 
         let mut join_set = JoinSet::new();
         let mut interval = tokio::time::interval(Duration::from_millis(interval));
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
+        let mut sigterm = signal(SignalKind::terminate())?;
+        let mut sigint = signal(SignalKind::interrupt())?;
         let ignore_list = Arc::new(Mutex::new(Vec::<String>::new()));
         let filter_map = Arc::new(self.filter.clone());
         
@@ -168,6 +164,8 @@ impl FileReceiver {
 
         while let Some(_) = join_set.join_next().await {}
         while let Some(_) = self.event_join_set.join_next().await {}
+
+        Ok(())
     }
 
     async fn get_files_in_directory(path: &Path) -> tokio::io::Result<Vec<PathBuf>> {
