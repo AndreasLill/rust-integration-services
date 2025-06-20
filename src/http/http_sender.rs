@@ -26,11 +26,15 @@ impl HttpSender {
     /// 
     /// Host header will be set automatically on the request from the url.
     pub async fn send(&mut self, mut request: HttpRequest) -> tokio::io::Result<HttpResponse> {
-        let host = self.url.host_str().unwrap();
-        let port = self.url.port_or_known_default().unwrap();
-        let addr = (host, port);
+        let url_host = self.url.host_str().unwrap();
+        let url_port = self.url.port_or_known_default().unwrap();
+        let url_path = self.url.path().to_string();
+        let addr = (url_host, url_port);
         
-        request.headers.insert("Host".to_string(), host.to_string());
+        if request.path == "/" {
+            request.path = url_path;
+        }
+        request.headers.insert("Host".to_string(), url_host.to_string());
         
         match self.url.scheme() {
             "http" => {
@@ -51,7 +55,7 @@ impl HttpSender {
                 let connector = TlsConnector::from(Arc::new(config));
                 let stream = TcpStream::connect(&addr).await?;
 
-                let domain = rustls::pki_types::ServerName::try_from(host)
+                let domain = rustls::pki_types::ServerName::try_from(url_host)
                 .map_err(|_| tokio::io::Error::new(ErrorKind::Other, "Invalid DNS name."))?
                 .to_owned();
 

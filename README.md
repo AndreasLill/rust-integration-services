@@ -78,7 +78,7 @@ HttpReceiver::new("127.0.0.1", 8080)
 .route("POST", "/", async move |_uuid, _request| {
     HttpResponse::ok()
 })
-.run()
+.receive()
 .await;
 ```
 

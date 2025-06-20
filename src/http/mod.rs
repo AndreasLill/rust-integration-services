@@ -18,7 +18,7 @@ mod test {
         tokio::spawn(async move {
             let result = HttpReceiver::new("127.0.0.1", 8080)
             .route("GET", "/", |_uuid, _request| async {
-                HttpResponse::ok().body("Text")
+                HttpResponse::ok().body_from_string("Text")
             })
             .receive()
             .await;
@@ -29,6 +29,6 @@ mod test {
         let request = HttpRequest::get();
         let response = HttpSender::new("http://127.0.0.1:8080").send(request).await.unwrap();
         assert_eq!(response.status_code, 200);
-        assert_eq!(response.body, "Text");
+        assert_eq!(response.body_to_string(), "Text");
     }
 }
