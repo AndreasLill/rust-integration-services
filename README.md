@@ -15,14 +15,14 @@ rust-integration-services = { version = "0", features = ["http", "file", "schedu
 ### File
 #### FileReceiver
 
-Poll the directory `./io/in/` every 500 milliseconds, and receive a callback with the path of a matching file using regular expression.
+Poll the directory `./io/in/` and receive a callback with the path of a matching file using regular expression.
 
 ``` rust
-let result = FileReceiver::new("./io/in/")
+let result = FileReceiver::new()
 .filter(".*", async move |_uuid, path| {
     println!("Callback: {:?}", path);
 })
-.receive_polling(500)
+.receive_polling("./io/in/")
 .await;
 ```
 
@@ -35,10 +35,9 @@ let result = FileSender::new("./io/out/file.txt")
 .await;
 ```
 
-Copy the contents from a file to another and overwrite target.
+Copy the contents from a file to another.
 ``` rust
 let result = FileSender::new("./io/out/file.txt")
-.overwrite(true)
 .send_copy("./io/in/file.txt")
 .await;
 ```

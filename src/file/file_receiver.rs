@@ -86,57 +86,54 @@ impl FileReceiver {
                 _ = sigterm.recv() => break,
                 _ = sigint.recv() => break,
                 _ = async {} => {
-                    match Self::get_files_in_directory(&dir_path).await {
-                        Ok(files) => {
+                    if let Ok(files) = Self::get_files_in_directory(&dir_path).await {
+                        for file_path in &files {
                             for (filter, callback) in filter_map.iter() {
-                                for file_path in &files {
-                                    let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
-                                    
-                                    // Check if the filter regex matches the file.
-                                    let regex = Regex::new(filter).unwrap();
-                                    if !regex.is_match(&file_name) {
-                                        continue;
-                                    }
-                                    
-                                    // Check if the file is being copied by comparing the current size with the previous polling size.
-                                    let size = tokio::fs::metadata(file_path).await.unwrap().len();
-                                    match size_map.get_mut(&file_name) {
-                                        Some(old_size) => {
-                                            if size > *old_size {
-                                                *old_size = size;
-                                                continue;
-                                            }
-                                            size_map.remove(&file_name);
-                                        }
-                                        None => {
-                                            size_map.insert(file_name, size);
+                                let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
+                                
+                                // Check if the filter regex matches the file.
+                                let regex = Regex::new(filter).unwrap();
+                                if !regex.is_match(&file_name) {
+                                    continue;
+                                }
+                                
+                                // Check if the file is being copied by comparing the current size with the previous polling size.
+                                let size = tokio::fs::metadata(file_path).await.unwrap().len();
+                                match size_map.get_mut(&file_name) {
+                                    Some(old_size) => {
+                                        if size > *old_size {
+                                            *old_size = size;
                                             continue;
                                         }
+                                        size_map.remove(&file_name);
                                     }
-
-                                    // Add file to a locked list to avoid multiple tasks processing the same file.
-                                    let mut unlocked_list = lock_list.lock().await;
-                                    if unlocked_list.contains(&file_name) {
+                                    None => {
+                                        size_map.insert(file_name, size);
                                         continue;
                                     }
-                                    unlocked_list.insert(file_name.clone());
-                                    drop(unlocked_list);
-                                    
-                                    let callback = Arc::clone(&callback);
-                                    let lock_list = Arc::clone(&lock_list);
-                                    let file_path = Arc::new(file_path.to_path_buf());
-                                    let uuid = Uuid::new_v4().to_string();
-                                
-                                    self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
-                                    join_set.spawn(async move {
-                                        callback(uuid, file_path.to_path_buf()).await;
-                                        let mut unlocked_list = lock_list.lock().await;
-                                        unlocked_list.remove(&file_name);
-                                    });
                                 }
+    
+                                // Add file to a locked list to avoid multiple tasks processing the same file.
+                                let mut unlocked_list = lock_list.lock().await;
+                                if unlocked_list.contains(&file_name) {
+                                    continue;
+                                }
+                                unlocked_list.insert(file_name.clone());
+                                drop(unlocked_list);
+                                
+                                let callback = Arc::clone(&callback);
+                                let lock_list = Arc::clone(&lock_list);
+                                let file_path = Arc::new(file_path.to_path_buf());
+                                let uuid = Uuid::new_v4().to_string();
+                            
+                                self.event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
+                                join_set.spawn(async move {
+                                    callback(uuid, file_path.to_path_buf()).await;
+                                    let mut unlocked_list = lock_list.lock().await;
+                                    unlocked_list.remove(&file_name);
+                                });
                             }
-                        },
-                        Err(_) => {},
+                        }
                     }
 
                     interval.tick().await;
