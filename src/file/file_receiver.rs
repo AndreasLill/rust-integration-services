@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, pin::Pin, sync::Arc, time::Duration};
 use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::{mpsc, Mutex}, task::JoinSet};
 use uuid::Uuid;
@@ -77,7 +77,7 @@ impl FileReceiver {
         let mut interval = tokio::time::interval(Duration::from_millis(1500));
         let mut sigterm = signal(SignalKind::terminate())?;
         let mut sigint = signal(SignalKind::interrupt())?;
-        let lock_list = Arc::new(Mutex::new(Vec::<String>::new()));
+        let lock_list = Arc::new(Mutex::new(HashSet::<String>::new()));
         let filter_map = Arc::new(self.filter.clone());
         let mut size_map = HashMap::<String, u64>::new();
         
@@ -99,18 +99,17 @@ impl FileReceiver {
                                     }
                                     
                                     // Check if the file is being copied by comparing the current size with the previous polling size.
-                                    let file_path_str = file_path.to_str().unwrap().to_string();
                                     let size = tokio::fs::metadata(file_path).await.unwrap().len();
-                                    match size_map.get_mut(&file_path_str) {
+                                    match size_map.get_mut(&file_name) {
                                         Some(old_size) => {
                                             if size > *old_size {
                                                 *old_size = size;
                                                 continue;
                                             }
-                                            size_map.remove(&file_path_str);
+                                            size_map.remove(&file_name);
                                         }
                                         None => {
-                                            size_map.insert(file_path_str, size);
+                                            size_map.insert(file_name, size);
                                             continue;
                                         }
                                     }
@@ -120,7 +119,7 @@ impl FileReceiver {
                                     if unlocked_list.contains(&file_name) {
                                         continue;
                                     }
-                                    unlocked_list.push(file_name.to_string());
+                                    unlocked_list.insert(file_name.clone());
                                     drop(unlocked_list);
                                     
                                     let callback = Arc::clone(&callback);
@@ -132,9 +131,7 @@ impl FileReceiver {
                                     join_set.spawn(async move {
                                         callback(uuid, file_path.to_path_buf()).await;
                                         let mut unlocked_list = lock_list.lock().await;
-                                        if let Some(pos) = unlocked_list.iter().position(|item| item == &file_name) {
-                                            unlocked_list.remove(pos);
-                                        }
+                                        unlocked_list.remove(&file_name);
                                     });
                                 }
                             }
