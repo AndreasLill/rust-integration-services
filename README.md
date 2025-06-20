@@ -18,11 +18,11 @@ rust-integration-services = { version = "0", features = ["http", "file", "schedu
 Poll the directory `./io/in/` and receive a callback with the path of a matching file using regular expression.
 
 ``` rust
-let result = FileReceiver::new()
+let result = FileReceiver::new("./io/in/")
 .filter(".*", async move |_uuid, path| {
     println!("Callback: {:?}", path);
 })
-.receive_polling("./io/in/")
+.receive()
 .await;
 ```
 

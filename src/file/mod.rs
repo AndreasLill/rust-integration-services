@@ -18,10 +18,4 @@ mod test {
         let result = FileSender::new("./test/file/out/TextFile1.txt").overwrite(true).send_copy("./test/file/in/TextFile1.txt").await;
         assert!(result.is_ok());
     }
-
-    #[tokio::test(start_paused = true)]
-    async fn file_receiver() {
-        //let result = FileReceiver::new("./test/file/in").filter(r"^.+\.[^./\\]+$", async move |_uuid, _path| {}).receive_files().await;
-        //assert!(result.is_ok());
-    }
 }

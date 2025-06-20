@@ -11,6 +11,7 @@ pub enum FileReceiverEventSignal {
 }
 
 pub struct FileReceiver {
+    directory: String,
     filter: HashMap<String, FileCallback>,
     event_broadcast: mpsc::Sender<FileReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<FileReceiverEventSignal>>,
@@ -18,9 +19,10 @@ pub struct FileReceiver {
 }
 
 impl FileReceiver {
-    pub fn new() -> Self {
+    pub fn new(directory: &str) -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         FileReceiver {
+            directory: directory.to_string(),
             filter: HashMap::new(),
             event_broadcast,
             event_receiver: Some(event_receiver),
@@ -67,8 +69,8 @@ impl FileReceiver {
         self
     }
 
-    pub async fn receive_polling(mut self, path: &str) -> tokio::io::Result<()> {
-        let dir_path = Path::new(path);
+    pub async fn receive(mut self) -> tokio::io::Result<()> {
+        let dir_path = Path::new(&self.directory);
         if !dir_path.try_exists()? {
             return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", dir_path)));
         }
