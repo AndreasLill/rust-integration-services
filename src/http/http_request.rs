@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Error};
+use std::{collections::HashMap};
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, BufReader};
 
@@ -9,7 +9,7 @@ pub struct HttpRequest {
     pub path: String,
     pub protocol: String,
     pub headers: HashMap<String, String>,
-    pub body: String,
+    pub body: Vec<u8>,
     pub ip: Option<String>,
 }
 
@@ -21,7 +21,7 @@ impl HttpRequest {
             path: String::new(),
             protocol: String::from("HTTP/1.1"),
             headers: HashMap::new(),
-            body: String::new(),
+            body: Vec::new(),
             ip: None,
         }
     }
@@ -59,9 +59,15 @@ impl HttpRequest {
         self
     }
 
-    pub fn body(mut self, body: &str) -> Self {
-        self.body = body.to_string();
-        self.headers.insert("Content-Length".to_string(), body.len().to_string());
+    pub fn body_bytes(mut self, body: &[u8]) -> Self {
+        self.body = body.to_vec();
+        self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));
+        self
+    }
+
+    pub fn body_string(mut self, body: &str) -> Self {
+        self.body = body.as_bytes().to_vec();
+        self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));
         self
     }
 
@@ -80,19 +86,28 @@ impl HttpRequest {
         self
     }
 
-    /// Returns a HTTP string
-    pub fn to_string(&self) -> String {
-        let first_line_str = format!("{} {} {}", self.method, self.path, self.protocol);
-        let mut headers_str = String::new();
+    pub fn body_to_string(&self) -> String {
+        String::from_utf8_lossy(&self.body).to_string()
+    }
 
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::new();
+        let first_line_str = format!("{} {} {}", self.method, self.path, self.protocol);
+
+        let mut headers_str = String::new();
         for (key, value) in &self.headers {
             headers_str.push_str(&format!("{}: {}\r\n", key, value));
         };
 
-        format!("{}\r\n{}\r\n{}", first_line_str, headers_str, self.body)
+        bytes.extend_from_slice(first_line_str.as_bytes());
+        bytes.extend_from_slice("\r\n".as_bytes());
+        bytes.extend_from_slice(headers_str.as_bytes());
+        bytes.extend_from_slice("\r\n".as_bytes());
+        bytes.extend(self.body.clone());
+        bytes
     }
 
-    pub async fn from_stream<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S) -> Result<HttpRequest, Error> {
+    pub async fn from_stream<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S) -> tokio::io::Result<HttpRequest> {
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
     
@@ -117,12 +132,12 @@ impl HttpRequest {
             }
         }
     
-        let mut body = String::new();
+        let mut body = Vec::new();
         if let Some(content_length) = headers.get("Content-Length") {
             let length = content_length.parse().unwrap_or(0);
-            let mut body_bytes = vec![0; length];
-            reader.read_exact(&mut body_bytes).await?;
-            body = String::from_utf8_lossy(&body_bytes).to_string();
+            let mut bytes = vec![0; length];
+            reader.read_exact(&mut bytes).await?;
+            body = bytes;
         }
     
         Ok(HttpRequest {

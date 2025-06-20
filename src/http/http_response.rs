@@ -58,13 +58,13 @@ impl HttpResponse {
         self
     }
     
-    pub fn body_from_bytes(mut self, body: &[u8]) -> Self {
+    pub fn body_bytes(mut self, body: &[u8]) -> Self {
         self.body = body.to_vec();
         self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));
         self
     }
 
-    pub fn body_from_string(mut self, body: &str) -> Self {
+    pub fn body_string(mut self, body: &str) -> Self {
         self.body = body.as_bytes().to_vec();
         self.headers.insert(String::from("Content-Length"), String::from(body.len().to_string()));
         self

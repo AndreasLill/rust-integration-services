@@ -39,7 +39,7 @@ impl HttpSender {
         match self.url.scheme() {
             "http" => {
                 let mut stream = TcpStream::connect(&addr).await?;
-                stream.write_all(request.to_string().as_bytes()).await?;
+                stream.write_all(&request.to_bytes()).await?;
 
                 let response = HttpResponse::from_stream(&mut stream).await?;
                 Ok(response)
@@ -60,7 +60,7 @@ impl HttpSender {
                 .to_owned();
 
                 let mut tls_stream = connector.connect(domain, stream).await?;
-                tls_stream.write_all(request.to_string().as_bytes()).await?;
+                tls_stream.write_all(&request.to_bytes()).await?;
 
                 let response = HttpResponse::from_stream(&mut tls_stream).await?;
                 Ok(response)
