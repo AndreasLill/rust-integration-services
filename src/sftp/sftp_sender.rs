@@ -56,10 +56,8 @@ impl SftpSender {
     /// The original file name will be used unless a new file name is specified.
     pub async fn send_file(self, source_path: &str) -> tokio::io::Result<()> {
         let source_path = Path::new(source_path);
-        match &source_path.try_exists() {
-            Ok(true) => {},
-            Ok(false) => return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The file '{}' does not exist!", &source_path.to_str().unwrap()))),
-            Err(err) => return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("{}", err.to_string()))),
+        if !source_path.try_exists()? {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", source_path)));
         }
 
         let tcp = TokioTcpStream::connect(&self.host).await?;

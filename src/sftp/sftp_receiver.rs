@@ -111,10 +111,8 @@ impl SftpReceiver {
     /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
     pub async fn receive_files(mut self, target_local_path: &str) -> tokio::io::Result<()> {
         let local_path = Path::new(target_local_path);
-        match &local_path.try_exists() {
-            Ok(true) => {},
-            Ok(false) => return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{}' does not exist!", &local_path.to_str().unwrap()))),
-            Err(err) => return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("{}", err.to_string()))),
+        if !local_path.try_exists()? {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", local_path)));
         }
 
         let tcp = TokioTcpStream::connect(&self.host).await?;
