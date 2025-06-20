@@ -52,14 +52,14 @@ let result = FileSender::new("./io/out/file.txt")
 
 Run a task once every hour and receive an event when it triggers.
 ``` rust
-ScheduleReceiver::new()
+let result = ScheduleReceiver::new()
 .interval(ScheduleInterval::Hour(1))
 .on_event(async move |event| {
     match event {
         ScheduleReceiverEventSignal::OnTrigger(uuid) => println!("{}", uuid),
     }
 })
-.run()
+.receive()
 .await;
 ```
 ---
@@ -103,7 +103,7 @@ Using `on_event` callback to print on download start and success.
 That way files can be processed asyncronously without blocking other downloads.
 
 ``` rust
-SftpReceiver::new("127.0.0.1:22", "user")
+let result = SftpReceiver::new("127.0.0.1:22", "user")
 .auth_password("pass")
 .remote_dir("upload")
 .delete_after(true)
@@ -113,7 +113,8 @@ SftpReceiver::new("127.0.0.1:22", "user")
         SftpReceiverEventSignal::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
     }
 })
-.receive_files("/home/user/files").await;
+.receive_files("/home/user/files")
+.await;
 ```
 
 #### SftpSender

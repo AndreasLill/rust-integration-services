@@ -83,7 +83,7 @@ impl ScheduleReceiver {
         self
     }
 
-    pub async fn run(mut self) {
+    pub async fn receive(mut self) -> tokio::io::Result<()> {
         let mut join_set = JoinSet::new();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
@@ -132,6 +132,8 @@ impl ScheduleReceiver {
         }
 
         while let Some(_) = self.event_join_set.join_next().await {}
+
+        Ok(())
     }
 
     async fn calculate_next_run(next_run: NaiveDateTime, interval: ScheduleInterval) -> NaiveDateTime {
