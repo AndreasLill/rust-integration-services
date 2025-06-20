@@ -28,7 +28,7 @@ impl HttpSender {
     pub async fn send(&mut self, mut request: HttpRequest) -> tokio::io::Result<HttpResponse> {
         let host = self.url.host_str().unwrap();
         let port = self.url.port_or_known_default().unwrap();
-        let addr = format!("{}:{}", host, port);
+        let addr = (host, port);
         
         request.headers.insert("Host".to_string(), host.to_string());
         

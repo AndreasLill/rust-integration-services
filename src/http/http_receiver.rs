@@ -41,7 +41,7 @@ pub struct TlsConfig {
 
 pub struct HttpReceiver {
     pub ip: String,
-    pub port: i32,
+    pub port: u16,
     routes: HashMap<String, RouteCallback>,
     event_broadcast: mpsc::Sender<HttpReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<HttpReceiverEventSignal>>,
@@ -50,7 +50,7 @@ pub struct HttpReceiver {
 }
 
 impl HttpReceiver {
-    pub fn new(ip: &str, port: i32) -> Self {
+    pub fn new(ip: &str, port: u16) -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         HttpReceiver {
             ip: String::from(ip),
@@ -108,9 +108,9 @@ impl HttpReceiver {
         self
     }
 
-    pub async fn run(mut self) {
-        let addr = format!("{}:{}", self.ip, self.port);
-        let listener = TcpListener::bind(&addr).await.unwrap();
+    pub async fn receive(mut self) -> tokio::io::Result<()> {
+        let addr = (self.ip, self.port);
+        let listener = TcpListener::bind(&addr).await?;
 
         let tls_acceptor = match &self.tls_config {
             Some(tls_cert) => {
@@ -211,6 +211,8 @@ impl HttpReceiver {
 
         while let Some(_) = join_set_main.join_next().await {}
         while let Some(_) = self.event_join_set.join_next().await {}
+
+        Ok(())
     }
 
     async fn is_connection_tls(stream: &TcpStream) -> tokio::io::Result<()> {

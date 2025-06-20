@@ -80,6 +80,7 @@ impl HttpRequest {
         self
     }
 
+    /// Returns a HTTP string
     pub fn to_string(&self) -> String {
         let first_line_str = format!("{} {} {}", self.method, self.path, self.protocol);
         let mut headers_str = String::new();

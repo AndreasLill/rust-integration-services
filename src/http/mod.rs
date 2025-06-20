@@ -15,12 +15,16 @@ mod test {
 
     #[tokio::test(start_paused = true)]
     async fn http_receiver_sender() {
-        let receiver = HttpReceiver::new("127.0.0.1", 8080)
-            .route("GET", "/", |_,_| async {
+        tokio::spawn(async move {
+            let result = HttpReceiver::new("127.0.0.1", 8080)
+            .route("GET", "/", |_uuid, _request| async {
                 HttpResponse::ok().body("Text")
-            });
-
-        tokio::spawn(receiver.run());
+            })
+            .receive()
+            .await;
+            assert!(result.is_ok());
+        });
+        
         tokio::time::advance(Duration::from_millis(100)).await;
         let request = HttpRequest::get();
         let response = HttpSender::new("http://127.0.0.1:8080").send(request).await.unwrap();
