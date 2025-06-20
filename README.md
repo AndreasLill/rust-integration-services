@@ -85,7 +85,7 @@ HttpReceiver::new("127.0.0.1", 8080)
 
 Send a HTTP GET request to `127.0.0.1:8080`.
 ``` rust
-let response = HttpSender::new("127.0.0.1:8080")
+let response = HttpSender::new("https://127.0.0.1:8080")
 .send(HttpRequest::get())
 .await
 .unwrap();
