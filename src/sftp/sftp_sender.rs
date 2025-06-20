@@ -82,7 +82,7 @@ impl SftpSender {
         let sftp = session.sftp().await?;
         let mut remote_file = sftp.create(&remote_path).await?;
         let mut source_file = OpenOptions::new().read(true).open(source_path).await?;
-        let mut buffer = vec![0u8; 8 * 1024 * 1024];
+        let mut buffer = vec![0u8; 4 * 1024 * 1024];
 
         loop {
             let bytes = source_file.read(&mut buffer).await?;
