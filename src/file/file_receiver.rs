@@ -11,7 +11,7 @@ pub enum FileReceiverEventSignal {
 }
 
 pub struct FileReceiver {
-    directory: String,
+    source_path: PathBuf,
     filter: HashMap<String, FileCallback>,
     event_broadcast: mpsc::Sender<FileReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<FileReceiverEventSignal>>,
@@ -19,10 +19,10 @@ pub struct FileReceiver {
 }
 
 impl FileReceiver {
-    pub fn new(directory: &str) -> Self {
+    pub fn new<T: AsRef<Path>>(source_path: T) -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         FileReceiver {
-            directory: directory.to_string(),
+            source_path: source_path.as_ref().to_path_buf(),
             filter: HashMap::new(),
             event_broadcast,
             event_receiver: Some(event_receiver),
@@ -31,13 +31,14 @@ impl FileReceiver {
     }
 
     /// Callback that returns all file paths from the filter using regular expression.
-    pub fn filter<T, Fut>(mut self, filter: &str, callback: T) -> Self 
+    pub fn filter<T, Fut, S>(mut self, filter: S, callback: T) -> Self 
     where
         T: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
+        S: AsRef<str>,
     {
-        Regex::new(filter).expect("Invalid Regex!");
-        self.filter.insert(filter.to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
+        Regex::new(filter.as_ref()).expect("Invalid Regex!");
+        self.filter.insert(filter.as_ref().to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
         self
     }
 
@@ -70,9 +71,8 @@ impl FileReceiver {
     }
 
     pub async fn receive(mut self) -> tokio::io::Result<()> {
-        let dir_path = Path::new(&self.directory);
-        if !dir_path.try_exists()? {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", dir_path)));
+        if !self.source_path.try_exists()? {
+            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", &self.source_path)));
         }
 
         let mut join_set = JoinSet::new();
@@ -88,7 +88,7 @@ impl FileReceiver {
                 _ = sigterm.recv() => break,
                 _ = sigint.recv() => break,
                 _ = async {} => {
-                    if let Ok(files) = Self::get_files_in_directory(&dir_path).await {
+                    if let Ok(files) = Self::get_files_in_directory(&self.source_path).await {
                         for file_path in &files {
                             for (filter, callback) in filter_map.iter() {
                                 let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
