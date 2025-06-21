@@ -1,6 +1,4 @@
 #[cfg(feature = "schedule")]
-pub mod schedule_timezone;
-#[cfg(feature = "schedule")]
 pub mod schedule_interval;
 #[cfg(feature = "schedule")]
 pub mod schedule_receiver;
