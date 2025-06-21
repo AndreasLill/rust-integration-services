@@ -20,7 +20,6 @@ pub struct SftpReceiver {
     remote_path: PathBuf,
     delete_after: bool,
     regex: String,
-    user: String,
     auth: SftpAuth,
     event_broadcast: mpsc::Sender<SftpReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<SftpReceiverEventSignal>>,
@@ -35,8 +34,7 @@ impl SftpReceiver {
             remote_path: PathBuf::new(),
             delete_after: false,
             regex: String::from(r"^.+\.[^./\\]+$"),
-            user: user.as_ref().to_string(),
-            auth: SftpAuth { password: None, private_key: None, private_key_passphrase: None },
+            auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
             event_broadcast,
             event_receiver: Some(event_receiver),
             event_join_set: JoinSet::new(),
@@ -121,10 +119,10 @@ impl SftpReceiver {
         session.handshake().await?;
 
         if let Some(password) = self.auth.password {
-            session.userauth_password(&self.user, &password).await?;
+            session.userauth_password(&self.auth.user, &password).await?;
         }
         if let Some(private_key) = self.auth.private_key {
-            session.userauth_pubkey_file(&self.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
+            session.userauth_pubkey_file(&self.auth.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
         }
 
         let remote_path = Path::new(&self.remote_path);

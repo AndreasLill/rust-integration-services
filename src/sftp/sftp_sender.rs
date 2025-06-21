@@ -10,7 +10,6 @@ pub struct SftpSender {
     host: String,
     remote_path: PathBuf,
     file_name: String,
-    user: String,
     auth: SftpAuth,
 }
 
@@ -20,8 +19,7 @@ impl SftpSender {
             host: host.as_ref().to_string(),
             remote_path: PathBuf::new(),
             file_name: String::new(),
-            user: user.as_ref().to_string(),
-            auth: SftpAuth { password: None, private_key: None, private_key_passphrase: None },
+            auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
         }
     }
 
@@ -66,10 +64,10 @@ impl SftpSender {
         session.handshake().await?;
         
         if let Some(password) = self.auth.password {
-            session.userauth_password(&self.user, &password).await?;
+            session.userauth_password(&self.auth.user, &password).await?;
         }
         if let Some(private_key) = self.auth.private_key {
-            session.userauth_pubkey_file(&self.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
+            session.userauth_pubkey_file(&self.auth.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
         }
         
         let mut target_name = source_path.file_name().unwrap().to_str().unwrap();
@@ -108,10 +106,10 @@ impl SftpSender {
         session.handshake().await?;
         
         if let Some(password) = self.auth.password {
-            session.userauth_password(&self.user, &password).await?;
+            session.userauth_password(&self.auth.user, &password).await?;
         }
         if let Some(private_key) = self.auth.private_key {
-            session.userauth_pubkey_file(&self.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
+            session.userauth_pubkey_file(&self.auth.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
         }
 
         let remote_path = Path::new(&self.remote_path).join(self.file_name);

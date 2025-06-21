@@ -126,7 +126,7 @@ A private key with a passphrase is used as authentication in this example.
 
 ``` rust
 let result = SftpSender::new("127.0.0.1:22", "user")
-.auth_private_key("/home/user/.ssh/id_rsa", "secret")
+.private_key("/home/user/.ssh/id_rsa", Some("secret"))
 .remote_path("upload")
 .send_file("/home/user/files/data.txt")
 .await;
@@ -137,7 +137,7 @@ A basic password is used as authentication in this example.
 
 ``` rust
 let result = SftpSender::new("127.0.0.1:22", "user")
-.auth_password("secret")
+.password("secret")
 .remote_path("upload")
 .file_name("data.txt")
 .send_string("a very beautiful important string")
