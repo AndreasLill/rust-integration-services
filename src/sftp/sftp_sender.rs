@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_ssh2_lite::{AsyncSession, SessionConfiguration, TokioTcpStream};
 use futures_util::AsyncWriteExt;
@@ -6,7 +6,7 @@ use tokio::{fs::OpenOptions, io::AsyncReadExt};
 
 pub struct SftpSender {
     host: String,
-    remote_dir: String,
+    remote_path: PathBuf,
     file_name: String,
     auth_username: String,
     auth_password: String,
@@ -15,12 +15,12 @@ pub struct SftpSender {
 }
 
 impl SftpSender {
-    pub fn new(host: &str, user: &str) -> Self {
+    pub fn new<T: AsRef<str>>(host: T, user: T) -> Self {
         SftpSender { 
-            host: host.to_string(),
-            remote_dir: String::new(),
+            host: host.as_ref().to_string(),
+            remote_path: PathBuf::new(),
             file_name: String::new(),
-            auth_username: user.to_string(),
+            auth_username: user.as_ref().to_string(),
             auth_password: String::new(),
             auth_private_key: String::new(),
             auth_private_key_passphrase: String::new(),
@@ -28,34 +28,34 @@ impl SftpSender {
     }
 
     /// Sets the password for authentication.
-    pub fn auth_password(mut self, password: &str) -> Self {
-        self.auth_password = password.to_string();
+    pub fn auth_password<T: AsRef<str>>(mut self, password: T) -> Self {
+        self.auth_password = password.as_ref().to_string();
         self
     }
 
     /// Sets the private key path and passphrase (empty string if passphrase is unused).
-    pub fn auth_private_key(mut self, key_path: &str, passphrase: &str) -> Self {
-        self.auth_private_key = key_path.to_string();
-        self.auth_private_key_passphrase = passphrase.to_string();
+    pub fn auth_private_key<T: AsRef<str>>(mut self, key_path: T, passphrase: T) -> Self {
+        self.auth_private_key = key_path.as_ref().to_string();
+        self.auth_private_key_passphrase = passphrase.as_ref().to_string();
         self
     }
 
     /// Sets the remote directory for the user on the sftp server.
-    pub fn remote_dir(mut self, remote_dir: &str) -> Self {
-        self.remote_dir = remote_dir.to_string();
+    pub fn remote_path<T: AsRef<Path>>(mut self, remote_path: T) -> Self {
+        self.remote_path = remote_path.as_ref().to_path_buf();
         self
     }
 
     /// Sets a new file name for the sent file.
-    pub fn file_name(mut self, file_name: &str) -> Self {
-        self.file_name = file_name.to_string();
+    pub fn file_name<T: AsRef<str>>(mut self, file_name: T) -> Self {
+        self.file_name = file_name.as_ref().to_string();
         self
     }
 
     /// Send a file using streaming with a buffer to support large file sizes.
     /// The original file name will be used unless a new file name is specified.
-    pub async fn send_file(self, source_path: &str) -> tokio::io::Result<()> {
-        let source_path = Path::new(source_path);
+    pub async fn send_file<T: AsRef<Path>>(self, source_path: T) -> tokio::io::Result<()> {
+        let source_path = source_path.as_ref();
         if !source_path.try_exists()? {
             return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", source_path)));
         }
@@ -75,7 +75,7 @@ impl SftpSender {
         if !self.file_name.is_empty() {
             target_name = &self.file_name;
         }
-        let remote_path = Path::new(&self.remote_dir).join(target_name);
+        let remote_path = Path::new(&self.remote_path).join(target_name);
         
         let sftp = session.sftp().await?;
         let mut remote_file = sftp.create(&remote_path).await?;
@@ -113,7 +113,7 @@ impl SftpSender {
             session.userauth_pubkey_file(&self.auth_username, None, private_key_path, Some(&self.auth_private_key_passphrase)).await?;
         }
 
-        let remote_path = Path::new(&self.remote_dir).join(self.file_name);
+        let remote_path = Path::new(&self.remote_path).join(self.file_name);
         let sftp = session.sftp().await?;
         let mut remote_file = sftp.create(&remote_path).await?;
         remote_file.write_all(bytes).await?;
@@ -123,7 +123,7 @@ impl SftpSender {
     }
 
     /// Send a string as a new file on the sftp server. A new file name is required.
-    pub async fn send_string(self, string: &str) -> tokio::io::Result<()> {
-        self.send_bytes(string.as_bytes()).await
+    pub async fn send_string<T: AsRef<str>>(self, string: T) -> tokio::io::Result<()> {
+        self.send_bytes(string.as_ref().as_bytes()).await
     }
 }

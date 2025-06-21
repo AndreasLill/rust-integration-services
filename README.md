@@ -121,24 +121,24 @@ let result = SftpReceiver::new("127.0.0.1:22", "user")
 
 #### SftpSender
 
-Send a file to `127.0.0.1:22` user remote directory `upload` keeping the same file name.  
+Send a file to `127.0.0.1:22` user remote path `upload` keeping the same file name.  
 A private key with a passphrase is used as authentication in this example.
 
 ``` rust
 let result = SftpSender::new("127.0.0.1:22", "user")
 .auth_private_key("/home/user/.ssh/id_rsa", "secret")
-.remote_dir("upload")
+.remote_path("upload")
 .send_file("/home/user/files/data.txt")
 .await;
 ```
 
-Send a string as a file to `127.0.0.1:22` user remote directory `upload` with a new file name.  
+Send a string as a file to `127.0.0.1:22` user remote path `upload` with a new file name.  
 A basic password is used as authentication in this example.
 
 ``` rust
 let result = SftpSender::new("127.0.0.1:22", "user")
 .auth_password("secret")
-.remote_dir("upload")
+.remote_path("upload")
 .file_name("data.txt")
 .send_string("a very beautiful important string")
 .await;

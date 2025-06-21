@@ -15,7 +15,7 @@ pub enum SftpReceiverEventSignal {
 
 pub struct SftpReceiver {
     host: String,
-    remote_dir: String,
+    remote_path: PathBuf,
     delete_after: bool,
     regex: String,
     auth_username: String,
@@ -28,14 +28,14 @@ pub struct SftpReceiver {
 }
 
 impl SftpReceiver {
-    pub fn new(host: &str, user: &str) -> Self {
+    pub fn new<T: AsRef<str>>(host: T, user: T) -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         SftpReceiver { 
-            host: host.to_string(),
-            remote_dir: String::new(),
+            host: host.as_ref().to_string(),
+            remote_path: PathBuf::new(),
             delete_after: false,
             regex: String::from(r"^.+\.[^./\\]+$"),
-            auth_username: user.to_string(),
+            auth_username: user.as_ref().to_string(),
             auth_password: String::new(),
             auth_private_key: String::new(),
             auth_private_key_passphrase: String::new(),
@@ -74,21 +74,21 @@ impl SftpReceiver {
     }
 
     /// Sets the password for authentication.
-    pub fn auth_password(mut self, password: &str) -> Self {
-        self.auth_password = password.to_string();
+    pub fn auth_password<T: AsRef<str>>(mut self, password: T) -> Self {
+        self.auth_password = password.as_ref().to_string();
         self
     }
 
     /// Sets the private key path and passphrase (empty string if passphrase is unused).
-    pub fn auth_private_key(mut self, key_path: &str, passphrase: &str) -> Self {
-        self.auth_private_key = key_path.to_string();
-        self.auth_private_key_passphrase = passphrase.to_string();
+    pub fn auth_private_key<T: AsRef<str>>(mut self, key_path: T, passphrase: T) -> Self {
+        self.auth_private_key = key_path.as_ref().to_string();
+        self.auth_private_key_passphrase = passphrase.as_ref().to_string();
         self
     }
 
     /// Sets the remote directory for the user on the sftp server.
-    pub fn remote_dir(mut self, remote_dir: &str) -> Self {
-        self.remote_dir = remote_dir.to_string();
+    pub fn remote_path<T: AsRef<Path>>(mut self, remote_path: T) -> Self {
+        self.remote_path = remote_path.as_ref().to_path_buf();
         self
     }
 
@@ -101,16 +101,16 @@ impl SftpReceiver {
     /// Sets the regex filter for what files will be downloaded from the sftp server.
     /// 
     /// The default regex is: ^.+\.[^./\\]+$
-    pub fn regex(mut self, regex: &str) -> Self {
-        self.regex = regex.to_string();
+    pub fn regex<T: AsRef<str>>(mut self, regex: T) -> Self {
+        self.regex = regex.as_ref().to_string();
         self
     }
 
     /// Download files from the sftp server to the target local path.
     /// 
     /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
-    pub async fn receive_files(mut self, target_local_path: &str) -> tokio::io::Result<()> {
-        let local_path = Path::new(target_local_path);
+    pub async fn receive_files<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
+        let local_path = target_local_path.as_ref();
         if !local_path.try_exists()? {
             return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", local_path)));
         }
@@ -126,7 +126,7 @@ impl SftpReceiver {
             session.userauth_pubkey_file(&self.auth_username, None, private_key_path, Some(&self.auth_private_key_passphrase)).await?;
         }
 
-        let remote_path = Path::new(&self.remote_dir);
+        let remote_path = Path::new(&self.remote_path);
         let sftp = session.sftp().await?;
         let entries = sftp.readdir(remote_path).await?;
         let regex = Regex::new(&self.regex).unwrap();
@@ -139,7 +139,7 @@ impl SftpReceiver {
             let file_name = entry.file_name().unwrap().to_str().unwrap();
             if regex.is_match(file_name) {
 
-                let remote_file_path = Path::new(&self.remote_dir).join(file_name);
+                let remote_file_path = Path::new(&self.remote_path).join(file_name);
                 let mut remote_file = sftp.open(&remote_file_path).await?;
                 let local_file_path = local_path.join(file_name);
                 let mut local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
