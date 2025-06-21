@@ -1,7 +1,8 @@
-use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use tokio::{signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet, time::sleep};
 use uuid::Uuid;
 
+use super::schedule_timezone::ScheduleTimeZone;
 use super::schedule_interval::ScheduleInterval;
 
 #[derive(Clone)]
@@ -11,7 +12,7 @@ pub enum ScheduleReceiverEventSignal {
 
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
-    next_run: NaiveDateTime,
+    next_run: DateTime<Utc>,
     event_broadcast: mpsc::Sender<ScheduleReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<ScheduleReceiverEventSignal>>,
     event_join_set: JoinSet<()>,
@@ -22,7 +23,7 @@ impl ScheduleReceiver {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         ScheduleReceiver {
             interval: ScheduleInterval::None,
-            next_run: Local::now().naive_local(),
+            next_run: Utc::now(),
             event_broadcast,
             event_receiver: Some(event_receiver),
             event_join_set: JoinSet::new(),
@@ -32,20 +33,39 @@ impl ScheduleReceiver {
     /// Sets the start date for the scheduled task.
     /// 
     /// If the provided date is in the past, the scheduler will calculate the next valid future run based on the defined interval.
-    pub fn start_date(mut self, year: i32, month: u32, day: u32) -> Self {
-        let date = NaiveDate::from_ymd_opt(year, month, day).expect("Not a valid date.");
-        let time = self.next_run.time();
-        self.next_run = date.and_time(time);
+    pub fn start_date(mut self, year: i32, month: u32, day: u32, time_zone: ScheduleTimeZone) -> Self {
+        let naive_date = NaiveDate::from_ymd_opt(year, month, day).expect("Not a valid date.");
+        let naive_time = self.next_run.time();
+        let naive_dt = naive_date.and_time(naive_time);
+        
+        //self.next_run = self.next_run.offset().from_local_datetime(&naive_dt).single().unwrap();
+        self.next_run = match time_zone {
+            ScheduleTimeZone::Local => {
+                let offset = Local.offset_from_local_datetime(&naive_dt).single().unwrap();
+                let local_dt = offset.from_local_datetime(&naive_dt).unwrap();//DateTime::<FixedOffset>::from_naive_utc_and_offset(naive_dt, offset);
+                local_dt.with_timezone(&Utc)
+            },
+            ScheduleTimeZone::Utc => DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc),
+        };
         self
     }
     
     /// Sets the start time for the scheduled task.
     /// 
     /// If the provided time is in the past, the scheduler will calculate the next valid future run based on the defined interval.
-    pub fn start_time(mut self, hour: u32, minute: u32, second: u32) -> Self {
-        let date = self.next_run.date();
-        let time = NaiveTime::from_hms_opt(hour, minute, second).expect("Not a valid time.");
-        self.next_run = date.and_time(time);
+    pub fn start_time(mut self, hour: u32, minute: u32, second: u32, time_zone: ScheduleTimeZone) -> Self {
+        let naive_date = self.next_run.date_naive();
+        let naive_time = NaiveTime::from_hms_opt(hour, minute, second).expect("Not a valid time.");
+        let naive_dt = naive_date.and_time(naive_time);
+
+        self.next_run = match time_zone {
+            ScheduleTimeZone::Local => {
+                let offset = Local.offset_from_local_datetime(&naive_dt).single().unwrap();
+                let local_dt = offset.from_local_datetime(&naive_dt).unwrap();
+                local_dt.with_timezone(&Utc)
+            },
+            ScheduleTimeZone::Utc => DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc),
+        };
         self
     }
     
@@ -88,15 +108,15 @@ impl ScheduleReceiver {
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
 
-        let now_comp = DateTime::from_timestamp(Local::now().naive_local().and_utc().timestamp(), 0).unwrap();
-        let next_run_comp = DateTime::from_timestamp(self.next_run.and_utc().timestamp(), 0).unwrap();
-        if next_run_comp < now_comp {
+        let now_timestamp = Utc::now().timestamp();
+        let next_run_timestamp = self.next_run.timestamp();
+        if next_run_timestamp < now_timestamp {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
         join_set.spawn(async move {
             loop {
-                let now = Local::now().naive_local();
+                let now = Utc::now();
                 if let Ok(duration) = (self.next_run - now).to_std() {
                     sleep(duration).await;
                 }
@@ -136,8 +156,8 @@ impl ScheduleReceiver {
         Ok(())
     }
 
-    async fn calculate_next_run(next_run: NaiveDateTime, interval: ScheduleInterval) -> NaiveDateTime {
-        let now = Local::now().naive_local();
+    async fn calculate_next_run(next_run: DateTime<Utc>, interval: ScheduleInterval) -> DateTime<Utc> {
+        let now = Utc::now();
 
         let interval_duration = match interval {
             ScheduleInterval::None => return next_run,
