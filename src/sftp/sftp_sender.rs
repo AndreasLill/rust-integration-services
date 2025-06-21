@@ -4,14 +4,14 @@ use async_ssh2_lite::{AsyncSession, SessionConfiguration, TokioTcpStream};
 use futures_util::AsyncWriteExt;
 use tokio::{fs::OpenOptions, io::AsyncReadExt};
 
+use crate::sftp::sftp_auth::SftpAuth;
+
 pub struct SftpSender {
     host: String,
     remote_path: PathBuf,
     file_name: String,
-    auth_username: String,
-    auth_password: String,
-    auth_private_key: String,
-    auth_private_key_passphrase: String,
+    user: String,
+    auth: SftpAuth,
 }
 
 impl SftpSender {
@@ -20,23 +20,24 @@ impl SftpSender {
             host: host.as_ref().to_string(),
             remote_path: PathBuf::new(),
             file_name: String::new(),
-            auth_username: user.as_ref().to_string(),
-            auth_password: String::new(),
-            auth_private_key: String::new(),
-            auth_private_key_passphrase: String::new(),
+            user: user.as_ref().to_string(),
+            auth: SftpAuth { password: None, private_key: None, private_key_passphrase: None },
         }
     }
 
     /// Sets the password for authentication.
-    pub fn auth_password<T: AsRef<str>>(mut self, password: T) -> Self {
-        self.auth_password = password.as_ref().to_string();
+    pub fn password<T: AsRef<str>>(mut self, password: T) -> Self {
+        self.auth.password = Some(password.as_ref().to_string());
         self
     }
 
-    /// Sets the private key path and passphrase (empty string if passphrase is unused).
-    pub fn auth_private_key<T: AsRef<str>>(mut self, key_path: T, passphrase: T) -> Self {
-        self.auth_private_key = key_path.as_ref().to_string();
-        self.auth_private_key_passphrase = passphrase.as_ref().to_string();
+    /// Sets the private key path and passphrase for authentication.
+    pub fn private_key<T: AsRef<Path>, S: AsRef<str>>(mut self, key_path: T, passphrase: Option<S>) -> Self {
+        self.auth.private_key = Some(key_path.as_ref().to_path_buf());
+        self.auth.private_key_passphrase = match passphrase {
+            Some(passphrase) => Some(passphrase.as_ref().to_string()),
+            None => None,
+        };
         self
     }
 
@@ -63,12 +64,12 @@ impl SftpSender {
         let tcp = TokioTcpStream::connect(&self.host).await?;
         let mut session = AsyncSession::new(tcp, SessionConfiguration::default())?;
         session.handshake().await?;
-        if !self.auth_password.is_empty() {
-            session.userauth_password(&self.auth_username, &self.auth_password).await?;
+        
+        if let Some(password) = self.auth.password {
+            session.userauth_password(&self.user, &password).await?;
         }
-        if !self.auth_private_key.is_empty() {
-            let private_key_path = Path::new(&self.auth_private_key);
-            session.userauth_pubkey_file(&self.auth_username, None, private_key_path, Some(&self.auth_private_key_passphrase)).await?;
+        if let Some(private_key) = self.auth.private_key {
+            session.userauth_pubkey_file(&self.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
         }
         
         let mut target_name = source_path.file_name().unwrap().to_str().unwrap();
@@ -105,12 +106,12 @@ impl SftpSender {
         let tcp = TokioTcpStream::connect(&self.host).await?;
         let mut session = AsyncSession::new(tcp, SessionConfiguration::default())?;
         session.handshake().await?;
-        if !self.auth_password.is_empty() {
-            session.userauth_password(&self.auth_username, &self.auth_password).await?;
+        
+        if let Some(password) = self.auth.password {
+            session.userauth_password(&self.user, &password).await?;
         }
-        if !self.auth_private_key.is_empty() {
-            let private_key_path = Path::new(&self.auth_private_key);
-            session.userauth_pubkey_file(&self.auth_username, None, private_key_path, Some(&self.auth_private_key_passphrase)).await?;
+        if let Some(private_key) = self.auth.private_key {
+            session.userauth_pubkey_file(&self.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
         }
 
         let remote_path = Path::new(&self.remote_path).join(self.file_name);
