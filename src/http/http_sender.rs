@@ -15,8 +15,8 @@ pub struct HttpSender {
 }
 
 impl HttpSender {
-    pub fn new(url: &str) -> Self {
-        let url = Url::parse(url).expect("Invalid URL!");
+    pub fn new<T: AsRef<str>>(url: T) -> Self {
+        let url = Url::parse(url.as_ref()).expect("Invalid URL!");
         HttpSender { 
             url,
         }

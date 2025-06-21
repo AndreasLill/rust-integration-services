@@ -70,7 +70,7 @@ let result = ScheduleReceiver::new()
 
 Run a HTTP receiver listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path.
 ``` rust
-HttpReceiver::new("127.0.0.1", 8080)
+HttpReceiver::new("127.0.0.1:8080")
 .route("GET", "/", async move |_uuid, _request| {
     HttpResponse::ok()
 })

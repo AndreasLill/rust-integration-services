@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::Path;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use rustls::pki_types::PrivateKeyDer;
@@ -35,13 +37,12 @@ pub enum HttpReceiverEventSignal {
 }
 
 pub struct TlsConfig {
-    cert_path: String,
-    key_path: String,
+    cert_path: PathBuf,
+    key_path: PathBuf,
 }
 
 pub struct HttpReceiver {
-    pub ip: String,
-    pub port: u16,
+    host: String,
     routes: HashMap<String, RouteCallback>,
     event_broadcast: mpsc::Sender<HttpReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<HttpReceiverEventSignal>>,
@@ -50,11 +51,10 @@ pub struct HttpReceiver {
 }
 
 impl HttpReceiver {
-    pub fn new(ip: &str, port: u16) -> Self {
+    pub fn new<T: AsRef<str>>(host: T) -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         HttpReceiver {
-            ip: String::from(ip),
-            port,
+            host: host.as_ref().to_string(),
             routes: HashMap::new(),
             event_broadcast,
             event_receiver: Some(event_receiver),
@@ -63,19 +63,20 @@ impl HttpReceiver {
         }
     }
 
-    pub fn route<T, Fut>(mut self, method: &str, route: &str, callback: T) -> Self
+    pub fn route<T, Fut, S>(mut self, method: S, route: S, callback: T) -> Self
     where
         T: Fn(String, HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
+        S: AsRef<str>,
     {
-        self.routes.insert(format!("{}|{}", method.to_uppercase(), route), Arc::new(move |uuid, request| Box::pin(callback(uuid, request))));
+        self.routes.insert(format!("{}|{}", method.as_ref().to_uppercase(), route.as_ref()), Arc::new(move |uuid, request| Box::pin(callback(uuid, request))));
         self
     }
 
-    pub fn tls(mut self, cert_path: &str, key_path: &str) -> Self {
+    pub fn tls<T: AsRef<Path>>(mut self, cert_path: T, key_path: T) -> Self {
         self.tls_config = Some(TlsConfig {
-            cert_path: cert_path.to_string(),
-            key_path: key_path.to_string()
+            cert_path: cert_path.as_ref().to_path_buf(),
+            key_path: key_path.as_ref().to_path_buf(),
         });
         self
     }
@@ -109,9 +110,7 @@ impl HttpReceiver {
     }
 
     pub async fn receive(mut self) -> tokio::io::Result<()> {
-        let addr = (self.ip, self.port);
-        let listener = TcpListener::bind(&addr).await?;
-
+        let listener = TcpListener::bind(&self.host).await?;
         let tls_acceptor = match &self.tls_config {
             Some(tls_cert) => {
                 let config = Arc::new(Self::create_tls_config(&tls_cert.cert_path, &tls_cert.key_path).unwrap());
@@ -231,7 +230,7 @@ impl HttpReceiver {
         }
     }
     
-    fn create_tls_config(cert_path: &str, key_path: &str) -> std::io::Result<ServerConfig> {
+    fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> std::io::Result<ServerConfig> {
         let cert_file = File::open(cert_path)?;
         let mut cert_reader = BufReader::new(cert_file);
         let certs = rustls_pemfile::certs(&mut cert_reader)

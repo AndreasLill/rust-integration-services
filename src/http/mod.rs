@@ -16,7 +16,7 @@ mod test {
     #[tokio::test(start_paused = true)]
     async fn http_receiver_sender() {
         tokio::spawn(async move {
-            let result = HttpReceiver::new("127.0.0.1", 8080)
+            let result = HttpReceiver::new("127.0.0.1:8080")
             .route("GET", "/", |_uuid, _request| async {
                 HttpResponse::ok().body_string("Text")
             })
