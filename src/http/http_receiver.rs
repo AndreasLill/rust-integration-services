@@ -111,18 +111,15 @@ impl HttpReceiver {
 
     pub async fn receive(mut self) -> tokio::io::Result<()> {
         let listener = TcpListener::bind(&self.host).await?;
-        let tls_acceptor = match &self.tls_config {
-            Some(tls_cert) => {
-                let config = Arc::new(Self::create_tls_config(&tls_cert.cert_path, &tls_cert.key_path).unwrap());
-                Some(TlsAcceptor::from(config))
-            },
-            None => None,
-        };
+        let tls_acceptor = self.tls_config.as_ref().map(|tls_cert| {
+            let config = Arc::new(Self::create_tls_config(&tls_cert.cert_path, &tls_cert.key_path).unwrap());
+            TlsAcceptor::from(config)
+        });
 
         let routes = Arc::new(self.routes.clone());
         let mut join_set_main = JoinSet::new();
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
+        let mut sigterm = signal(SignalKind::terminate())?;
+        let mut sigint = signal(SignalKind::interrupt())?;
         
         loop {
             tokio::select! {
@@ -245,7 +242,7 @@ impl HttpReceiver {
 
         let key = keys.pop().unwrap();
         let config = ServerConfig::builder()
-            .with_no_client_auth() // Adjust if client auth is needed
+            .with_no_client_auth()
             .with_single_cert(certs, PrivateKeyDer::Pkcs8(key))
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
 
