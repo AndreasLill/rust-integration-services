@@ -4,7 +4,8 @@ use async_ssh2_lite::{AsyncSession, SessionConfiguration, TokioTcpStream};
 use futures_util::AsyncWriteExt;
 use tokio::{fs::OpenOptions, io::AsyncReadExt};
 
-use crate::sftp::sftp_auth::SftpAuth;
+use super::sftp_auth::SftpAuth;
+use crate::utils::error::Error;
 
 pub struct SftpSender {
     host: String,
@@ -56,7 +57,7 @@ impl SftpSender {
     pub async fn send_file<T: AsRef<Path>>(self, source_path: T) -> tokio::io::Result<()> {
         let source_path = source_path.as_ref();
         if !source_path.try_exists()? {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", source_path)));
+            return Err(Error::std_io(format!("The path '{:?}' does not exist!", &source_path)));
         }
 
         let tcp = TokioTcpStream::connect(&self.host).await?;
@@ -98,7 +99,7 @@ impl SftpSender {
     /// Send bytes as a new file on the sftp server. A new file name is required.
     pub async fn send_bytes(self, bytes: &[u8]) -> tokio::io::Result<()> {
         if self.file_name.is_empty() {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("A file name is required!")));
+            return Err(Error::tokio_io("A file name is required!"));
         }
 
         let tcp = TokioTcpStream::connect(&self.host).await?;

@@ -19,6 +19,8 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
+use crate::utils::error::Error;
+
 use super::http_request::HttpRequest;
 use super::http_response::HttpResponse;
 
@@ -220,10 +222,10 @@ impl HttpReceiver {
                 if is_tls_client_sig {
                     return Ok(())
                 }
-                Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, "Non-TLS request on TLS receiver."))
+                Err(Error::tokio_io("Non-TLS request on TLS receiver."))
             },
-            Ok(_) => Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, "Could not determine TLS signature.")),
-            Err(err) => Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, err.to_string())),
+            Ok(_) => Err(Error::tokio_io("Could not determine TLS signature.")),
+            Err(err) => Err(err),
         }
     }
     
@@ -232,19 +234,19 @@ impl HttpReceiver {
         let mut cert_reader = BufReader::new(cert_file);
         let certs = rustls_pemfile::certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid certificate"))?;
+            .map_err(|_| Error::std_io("Invalid certificate"))?;
 
         let key_file = File::open(key_path)?;
         let mut key_reader = BufReader::new(key_file);
         let mut keys = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid private key"))?;
+            .map_err(|_| Error::std_io("Invalid private key"))?;
 
         let key = keys.pop().unwrap();
         let config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, PrivateKeyDer::Pkcs8(key))
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+            .map_err(|err| Error::std_io(err.to_string()))?;
 
         Ok(config)
     }

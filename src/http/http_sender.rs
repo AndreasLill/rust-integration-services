@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
-use tokio::io::Error;
-use tokio::io::ErrorKind;
 use tokio_rustls::TlsConnector;
 use url::Url;
 use webpki_roots::TLS_SERVER_ROOTS;
+
+use crate::utils::error::Error;
 
 use super::{http_request::HttpRequest, http_response::HttpResponse};
 
@@ -56,7 +56,7 @@ impl HttpSender {
                 let stream = TcpStream::connect(&addr).await?;
 
                 let domain = rustls::pki_types::ServerName::try_from(url_host)
-                .map_err(|_| tokio::io::Error::new(ErrorKind::Other, "Invalid DNS name."))?
+                .map_err(|_| Error::tokio_io("Invalid DNS name."))?
                 .to_owned();
 
                 let mut tls_stream = connector.connect(domain, stream).await?;
@@ -66,7 +66,7 @@ impl HttpSender {
                 Ok(response)
             }
             _ => {
-                Err(Error::new(ErrorKind::Other, format!("Scheme '{}' not supported.", self.url.scheme())))
+                Err(Error::tokio_io(format!("Scheme '{}' not supported.", self.url.scheme())))
             }
         }
     }

@@ -6,8 +6,8 @@ use regex::Regex;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet};
 use uuid::Uuid;
 
-use crate::sftp::sftp_auth::SftpAuth;
-
+use super::sftp_auth::SftpAuth;
+use crate::utils::error::Error;
 
 #[derive(Clone)]
 pub enum SftpReceiverEventSignal {
@@ -111,7 +111,7 @@ impl SftpReceiver {
     pub async fn receive_files<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
         let local_path = target_local_path.as_ref();
         if !local_path.try_exists()? {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", local_path)));
+            return Err(Error::tokio_io(format!("The path '{:?}' does not exist!", &local_path)));
         }
 
         let tcp = TokioTcpStream::connect(&self.host).await?;

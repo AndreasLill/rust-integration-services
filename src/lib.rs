@@ -1,3 +1,4 @@
+pub mod utils;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "file")]

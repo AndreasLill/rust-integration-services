@@ -3,6 +3,8 @@ use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::{mpsc, Mutex}, task::JoinSet};
 use uuid::Uuid;
 
+use crate::utils::error::Error;
+
 type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
@@ -72,7 +74,7 @@ impl FileReceiver {
 
     pub async fn receive(mut self) -> tokio::io::Result<()> {
         if !self.source_path.try_exists()? {
-            return Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("The path '{:?}' does not exist!", &self.source_path)));
+            return Err(Error::tokio_io(format!("The path '{:?}' does not exist!", &self.source_path)));
         }
 
         let mut join_set = JoinSet::new();
