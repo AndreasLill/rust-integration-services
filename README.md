@@ -4,11 +4,18 @@ A modern, fast, and lightweight integration library written in Rust, designed fo
 
 ## Installation
 
-Add rust-integration-services to your project Cargo.toml and select features.
+Add rust-integration-services to your project Cargo.toml with all or select features.
 
+All features
 ``` toml
 [dependencies]
-rust-integration-services = { version = "0", features = ["http", "file", "schedule", "sftp"] }
+rust-integration-services = { version = "0.1.1" }
+```
+
+Select features
+``` toml
+[dependencies]
+rust-integration-services = { version = "0.1.1", default-features = false, features = ["http", "file", "schedule", "sftp"] }
 ```
 
 ## Features
