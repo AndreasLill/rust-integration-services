@@ -11,7 +11,7 @@ use super::sftp_auth::SftpAuth;
 use crate::utils::error::Error;
 
 #[derive(Clone)]
-pub enum EventSignal {
+pub enum SftpReceiverEventSignal {
     OnDownloadStart(String, PathBuf),
     OnDownloadSuccess(String, PathBuf),
     OnDownloadFailed(String, PathBuf),
@@ -23,8 +23,8 @@ pub struct SftpReceiver {
     delete_after: bool,
     regex: String,
     auth: SftpAuth,
-    event_broadcast: mpsc::Sender<EventSignal>,
-    event_receiver: Option<mpsc::Receiver<EventSignal>>,
+    event_broadcast: mpsc::Sender<SftpReceiverEventSignal>,
+    event_receiver: Option<mpsc::Receiver<SftpReceiverEventSignal>>,
     event_join_set: JoinSet<()>,
 }
 
@@ -45,7 +45,7 @@ impl SftpReceiver {
 
     pub fn on_event<T, Fut>(mut self, handler: T) -> Self
     where
-        T: Fn(EventSignal) -> Fut + Send + Sync + 'static,
+        T: Fn(SftpReceiverEventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let mut receiver = self.event_receiver.unwrap();
@@ -110,7 +110,7 @@ impl SftpReceiver {
     /// Download files from the sftp server to the target local path.
     /// 
     /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
-    pub async fn receive_files<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
+    pub async fn receive_files_to_path<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
         let local_path = target_local_path.as_ref();
         if !local_path.try_exists()? {
             return Err(Error::tokio_io(format!("The path '{:?}' does not exist!", &local_path)));
@@ -146,17 +146,17 @@ impl SftpReceiver {
                 let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
 
                 let uuid = Uuid::new_v4().to_string();
-                self.event_broadcast.send(EventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
+                self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
 
                 match Self::download_file(remote_file, local_file).await {
                     Ok(_) => {
-                        self.event_broadcast.send(EventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
+                        self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
 
                         if self.delete_after {
                             sftp.unlink(&remote_file_path).await?;
                         }
                     },
-                    Err(_) => self.event_broadcast.send(EventSignal::OnDownloadFailed(uuid.clone(), local_file_path.clone())).await.unwrap(),
+                    Err(_) => self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadFailed(uuid.clone(), local_file_path.clone())).await.unwrap(),
                 }
             }
         }

@@ -84,7 +84,7 @@ let result = ScheduleReceiver::new()
 
 Run a HTTP receiver listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path.
 ``` rust
-HttpReceiver::new("127.0.0.1:8080")
+let result = HttpReceiver::new("127.0.0.1:8080")
 .route("GET", "/", async move |_uuid, _request| {
     HttpResponse::ok()
 })
@@ -127,11 +127,20 @@ let result = SftpReceiver::new("127.0.0.1:22", "user")
     match event {
         SftpReceiverEventSignal::OnDownloadStart(_uuid, path) => println!("Download started: {:?}", path),
         SftpReceiverEventSignal::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
+        SftpReceiverEventSignal::OnDownloadFailed(_uuid, path) => println!("Download failed: {:?}", path),
     }
 })
-.receive_files("/home/user/files")
+.receive_files_to_path("/home/user/files")
 .await;
 ```
+
+By setting a custom regex to the receiver, the sftp receiver will only download files matching this regex.  
+For examplem this will only download files starting with "ABC_".
+
+``` rust
+.regex("^ABC_.+\.[^./\\]+$")
+```
+
 
 #### SftpSender
 
