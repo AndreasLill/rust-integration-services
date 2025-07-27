@@ -1,18 +1,20 @@
 use std::path::{Path, PathBuf};
 
-use async_ssh2_lite::{AsyncSession, SessionConfiguration, TokioTcpStream};
+use async_ssh2_lite::{AsyncFile, AsyncSession, SessionConfiguration, TokioTcpStream};
 use futures_util::{AsyncReadExt};
 use regex::Regex;
-use tokio::{fs::OpenOptions, io::AsyncWriteExt, signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet};
+use tokio::{fs::{File, OpenOptions}, io::AsyncWriteExt, signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet};
+use tokio::net::TcpStream;
 use uuid::Uuid;
 
 use super::sftp_auth::SftpAuth;
 use crate::utils::error::Error;
 
 #[derive(Clone)]
-pub enum SftpReceiverEventSignal {
+pub enum EventSignal {
     OnDownloadStart(String, PathBuf),
     OnDownloadSuccess(String, PathBuf),
+    OnDownloadFailed(String, PathBuf),
 }
 
 pub struct SftpReceiver {
@@ -21,8 +23,8 @@ pub struct SftpReceiver {
     delete_after: bool,
     regex: String,
     auth: SftpAuth,
-    event_broadcast: mpsc::Sender<SftpReceiverEventSignal>,
-    event_receiver: Option<mpsc::Receiver<SftpReceiverEventSignal>>,
+    event_broadcast: mpsc::Sender<EventSignal>,
+    event_receiver: Option<mpsc::Receiver<EventSignal>>,
     event_join_set: JoinSet<()>,
 }
 
@@ -43,7 +45,7 @@ impl SftpReceiver {
 
     pub fn on_event<T, Fut>(mut self, handler: T) -> Self
     where
-        T: Fn(SftpReceiverEventSignal) -> Fut + Send + Sync + 'static,
+        T: Fn(EventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let mut receiver = self.event_receiver.unwrap();
@@ -139,34 +141,45 @@ impl SftpReceiver {
             if regex.is_match(file_name) {
 
                 let remote_file_path = Path::new(&self.remote_path).join(file_name);
-                let mut remote_file = sftp.open(&remote_file_path).await?;
+                let remote_file = sftp.open(&remote_file_path).await?;
                 let local_file_path = local_path.join(file_name);
-                let mut local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
+                let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
 
                 let uuid = Uuid::new_v4().to_string();
-                self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
+                self.event_broadcast.send(EventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
 
-                let mut buffer = vec![0u8; 1024 * 1024];
-                loop {
-                    let bytes = remote_file.read(&mut buffer).await?;
-                    if bytes == 0 {
-                        break;
-                    }
-                    local_file.write_all(&buffer[..bytes]).await?;
-                }
+                match Self::download_file(remote_file, local_file).await {
+                    Ok(_) => {
+                        self.event_broadcast.send(EventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
 
-                self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
-                local_file.flush().await?;
-                remote_file.close().await?;
-
-                if self.delete_after {
-                    sftp.unlink(&remote_file_path).await?;
+                        if self.delete_after {
+                            sftp.unlink(&remote_file_path).await?;
+                        }
+                    },
+                    Err(_) => self.event_broadcast.send(EventSignal::OnDownloadFailed(uuid.clone(), local_file_path.clone())).await.unwrap(),
                 }
             }
         }
 
+        drop(self.event_broadcast);
         while let Some(_) = self.event_join_set.join_next().await {}
-        
+
+        Ok(())
+    }
+
+    async fn download_file(mut remote_file: AsyncFile<TcpStream>, mut local_file: File) -> tokio::io::Result<()> {
+        let mut buffer = vec![0u8; 1024 * 1024];
+        loop {
+            let bytes = remote_file.read(&mut buffer).await?;
+            if bytes == 0 {
+                break;
+            }
+            local_file.write_all(&buffer[..bytes]).await?;
+        }
+
+        local_file.flush().await?;
+        remote_file.close().await?;
+
         Ok(())
     }
 }
