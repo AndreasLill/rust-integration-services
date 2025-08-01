@@ -1,6 +1,8 @@
 pub mod utils;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "http-hyper")]
+pub mod http_hyper;
 #[cfg(feature = "file")]
 pub mod file;
 #[cfg(feature = "schedule")]
