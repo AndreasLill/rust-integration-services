@@ -87,11 +87,15 @@ let result = ScheduleReceiver::new()
 ```
 ---
 ### HTTP
+The http module is built on top of the fast and reliable [`hyper`](https://docs.rs/hyper) HTTP library.
+
+It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-performance HTTP communication with automatic protocol negotiation via ALPN (Application-Layer Protocol Negotiation).
+
 #### HttpReceiver
 
 Run a HTTP receiver listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path.
 ``` rust
-let result = HttpReceiver::new("127.0.0.1:8080")
+HttpReceiver::new("127.0.0.1:8080")
 .route("GET", "/", async move |_uuid, _request| {
     HttpResponse::ok()
 })
@@ -102,12 +106,53 @@ let result = HttpReceiver::new("127.0.0.1:8080")
 .await;
 ```
 
-#### HttpSender
-
-Send a HTTP GET request to `127.0.0.1:8080`.
+Run a HTTP receiver with TLS listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path and log events.
 ``` rust
-let response = HttpSender::new("https://127.0.0.1:8080")
-.send(HttpRequest::get())
+HttpReceiver::new("127.0.0.1:8080")
+.tls("/home/user/cert.pem", "/home/user/key.pem")
+.route("GET", "/", async move |_uuid, _request| {
+    HttpResponse::ok()
+})
+.route("POST", "/", async move |_uuid, _request| {
+    HttpResponse::ok()
+})
+.on_event(async move |event| {
+    match event {
+        HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => println!("Connection[{}] opened: {}", uuid, ip),
+        HttpReceiverEventSignal::OnRequest(uuid, request) => println!("Request[{}]: {:?}", uuid, request),
+        HttpReceiverEventSignal::OnResponse(uuid, response) => println!("Response[{}]: {:?}", uuid, response),
+        HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => println!("Failed[{}]: {}", uuid, err),
+    }
+})
+.receive()
+.await;
+```
+
+#### HttpSender
+HttpSender will automatically use a secure TLS connection if the scheme is `https` and ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
+
+Send a GET request to `http://127.0.0.1:8080`.
+``` rust
+let response = HttpSender::new()
+.send("http://127.0.0.1:8080", HttpRequest::get())
+.await
+.unwrap();
+```
+
+Send a GET request using TLS to `https://127.0.0.1:8080`.
+``` rust
+let response = HttpSender::new()
+.send("https://127.0.0.1:8080", HttpRequest::get())
+.await
+.unwrap();
+```
+
+Send a GET request using TLS and custom Root CA to `https://127.0.0.1:8080`.
+``` rust
+let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
+let response = HttpSender::new()
+.root_ca(root_ca_path)
+.send("https://127.0.0.1:8080", HttpRequest::get())
 .await
 .unwrap();
 ```
