@@ -218,14 +218,6 @@ impl HttpReceiver {
         let mut request = HttpRequest::new();
         request.method = HttpMethod::from_str(parts.method.as_str()).unwrap();
         request.path = parts.uri.path().to_string();
-        request.version = match parts.version {
-            hyper::Version::HTTP_09 => String::from("HTTP/0.9"),
-            hyper::Version::HTTP_10 => String::from("HTTP/1.0"),
-            hyper::Version::HTTP_11 => String::from("HTTP/1.1"),
-            hyper::Version::HTTP_2 => String::from("HTTP/2"),
-            hyper::Version::HTTP_3 => String::from("HTTP/3"),
-            _ => String::new(),
-        };
         for (key, value) in parts.headers {
             if let (Some(key), Ok(value)) = (key, value.to_str()) {
                 request.headers.insert(key.to_string(), value.to_string());

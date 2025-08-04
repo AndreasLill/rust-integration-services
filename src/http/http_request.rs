@@ -6,7 +6,6 @@ use crate::http::http_method::HttpMethod;
 pub struct HttpRequest {
     pub method: HttpMethod,
     pub path: String,
-    pub version: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
 }
@@ -16,7 +15,6 @@ impl HttpRequest {
         HttpRequest {
             method: HttpMethod::Get,
             path: String::from("/"),
-            version: String::new(),
             headers: HashMap::new(),
             body: Vec::new(),
         }
