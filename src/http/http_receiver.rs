@@ -8,7 +8,7 @@ use tokio::{net::TcpListener, net::TcpStream, signal::unix::{signal, SignalKind}
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use crate::{http::{http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse}, utils::{crypto::Crypto, result::ResultDyn}};
+use crate::{http::{http_executor::HttpExecutor, http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse}, utils::{crypto::Crypto, result::ResultDyn}};
 
 type RouteCallback = Arc<dyn Fn(String, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
@@ -17,7 +17,6 @@ pub enum HttpReceiverEventSignal {
     OnConnectionOpened(String, String),
     OnRequest(String, HttpRequest),
     OnResponse(String, HttpResponse),
-    OnConnectionClosed(String),
     OnConnectionFailed(String, String),
 }
 
@@ -45,10 +44,10 @@ impl HttpReceiver {
     }
 
     /// Enables TLS for incoming connections using the provided server certificate and private key in `.pem` format and
-    /// configures the TLS context and sets supported ALPN protocols to allow HTTP/2, HTTP/1.1, and HTTP/1.0.
+    /// configures the TLS context and sets supported ALPN protocols to allow HTTP/2 and HTTP/1.1.
     pub fn tls<T: AsRef<Path>>(mut self, tls_server_cert_path: T, tls_server_key_path: T) -> Self {
         let mut tls_config = Self::create_tls_config(tls_server_cert_path, tls_server_key_path).expect("Failed to create TLS config");
-        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
         self.tls_config = Some(tls_config);
         self
@@ -173,12 +172,11 @@ impl HttpReceiver {
         let event_broadcast_clone = event_broadcast.clone();
         let io = TokioIo::new(tcp_stream);
         let service = service_fn(move |req| {
-            Self::incoming_request(req, uuid_clone.clone(), routes.clone(), event_broadcast_clone.to_owned())
+            Self::incoming_request(req, uuid_clone.to_owned(), routes.clone(), event_broadcast_clone.to_owned())
         });
         
-        match hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionClosed(uuid)).await.unwrap(),
-            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, err.to_string())).await.unwrap(),
+        if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
+            event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, err.to_string())).await.unwrap();
         }
     }
 
@@ -193,15 +191,26 @@ impl HttpReceiver {
         
         let uuid_clone = uuid.clone();
         let event_broadcast_clone = event_broadcast.clone();
-        let io = TokioIo::new(tls_stream);
         let service = service_fn(move |req| {
-            Self::incoming_request(req, uuid_clone.clone(), routes.clone(), event_broadcast_clone.to_owned())
+            Self::incoming_request(req, uuid_clone.to_owned(), routes.clone(), event_broadcast_clone.to_owned())
         });
         
-        match hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionClosed(uuid)).await.unwrap(),
-            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, format!("Connection failed: {:?}", err))).await.unwrap(),
+        let io = TokioIo::new(tls_stream);
+        let protocol = io.inner().get_ref().1.alpn_protocol();
+
+        match protocol.as_deref() {
+            Some(b"h2") => {
+                if let Err(err) = hyper::server::conn::http2::Builder::new(HttpExecutor).serve_connection(io, service).await {
+                    event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, format!("Connection failed: {:?}", err))).await.unwrap();
+                }
+            }
+            _ => {
+                if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
+                    event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, err.to_string())).await.unwrap();
+                }
+            }
         }
+
     }
 
     async fn build_http_request(req: Request<Incoming>) -> HttpRequest {

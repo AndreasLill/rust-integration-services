@@ -1,4 +1,6 @@
 #[cfg(feature = "http")]
+pub mod http_executor;
+#[cfg(feature = "http")]
 pub mod http_receiver;
 #[cfg(feature = "http")]
 pub mod http_sender;
@@ -30,7 +32,6 @@ mod test {
                     HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => eprintln!("Connection[{}]: {}", uuid, ip),
                     HttpReceiverEventSignal::OnRequest(uuid, request) => eprintln!("Request[{}]: {:?}", uuid, request),
                     HttpReceiverEventSignal::OnResponse(uuid, response) => eprintln!("Response[{}]: {:?}", uuid, response),
-                    HttpReceiverEventSignal::OnConnectionClosed(uuid) => eprintln!("Closed[{}]", uuid),
                     HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => eprintln!("Failed[{}]: {}", uuid, err),
                 }
             })
@@ -69,7 +70,6 @@ mod test {
                     HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => eprintln!("Connection[{}]: {}", uuid, ip),
                     HttpReceiverEventSignal::OnRequest(uuid, request) => eprintln!("Request[{}]: {:?}", uuid, request),
                     HttpReceiverEventSignal::OnResponse(uuid, response) => eprintln!("Response[{}]: {:?}", uuid, response),
-                    HttpReceiverEventSignal::OnConnectionClosed(uuid) => eprintln!("Closed[{}]", uuid),
                     HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => eprintln!("Failed[{}]: {}", uuid, err),
                 }
             })
@@ -87,13 +87,13 @@ mod test {
     }
 
     #[tokio::test]
-    async fn http1_sender() {
+    async fn http_sender() {
         let result = HttpSender::new().send("http://httpbin.org/get", HttpRequest::get()).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn http1_sender_tls() {
+    async fn http_sender_tls() {
         let result = HttpSender::new().send("https://httpbin.org/get", HttpRequest::get()).await;
         assert!(result.is_ok());
     }
