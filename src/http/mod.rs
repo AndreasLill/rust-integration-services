@@ -1,34 +1,132 @@
 #[cfg(feature = "http")]
+pub mod http_receiver;
+#[cfg(feature = "http")]
+pub mod http_sender;
+#[cfg(feature = "http")]
 pub mod http_request;
 #[cfg(feature = "http")]
 pub mod http_response;
 #[cfg(feature = "http")]
-pub mod http_receiver;
+pub mod http_status;
 #[cfg(feature = "http")]
-pub mod http_sender;
+pub mod http_method;
 
 #[cfg(feature = "http")]
 #[cfg(test)]
 mod test {
-    use crate::http::{http_receiver::HttpReceiver, http_request::HttpRequest, http_response::HttpResponse, http_sender::HttpSender};
-    use tokio::time::Duration;
+    use std::{env::home_dir, time::Duration};
+
+    use crate::http::{http_method::HttpMethod, http_receiver::{HttpReceiver, HttpReceiverEventSignal}, http_request::HttpRequest, http_response::HttpResponse, http_sender::HttpSender, http_status::HttpStatus};
 
     #[tokio::test(start_paused = true)]
-    async fn http_receiver_sender() {
+    async fn http_receiver() {
         tokio::spawn(async move {
-            let result = HttpReceiver::new("127.0.0.1:8080")
-            .route("GET", "/", |_uuid, _request| async {
-                HttpResponse::ok().body_string("Text")
+            HttpReceiver::new("127.0.0.1:8080")
+            .route("GET", "/", async move |_uuid, _request| {
+                HttpResponse::ok()
+            })
+            .on_event(async move |event| {
+                match event {
+                    HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => eprintln!("Connection[{}]: {}", uuid, ip),
+                    HttpReceiverEventSignal::OnRequest(uuid, request) => eprintln!("Request[{}]: {:?}", uuid, request),
+                    HttpReceiverEventSignal::OnResponse(uuid, response) => eprintln!("Response[{}]: {:?}", uuid, response),
+                    HttpReceiverEventSignal::OnConnectionClosed(uuid) => eprintln!("Closed[{}]", uuid),
+                    HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => eprintln!("Failed[{}]: {}", uuid, err),
+                }
             })
             .receive()
             .await;
-            assert!(result.is_ok());
         });
-        
+
         tokio::time::advance(Duration::from_millis(100)).await;
-        let request = HttpRequest::get();
-        let response = HttpSender::new("http://127.0.0.1:8080").send(request).await.unwrap();
-        assert_eq!(response.status_code, 200);
-        assert_eq!(response.body_to_string(), "Text");
+
+        let result = HttpSender::new().send("http://127.0.0.1:8080", HttpRequest::get()).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status.code(), 200);
+    }
+
+    /// Create your own certs for testing.
+    /// 
+    /// sudo dnf install mkcert
+    /// 
+    /// mkcert -install
+    /// 
+    /// mkcert localhost 127.0.0.1 ::1
+    #[tokio::test(start_paused = true)]
+    async fn http_receiver_tls() {
+        assert!(home_dir().is_some());
+        tokio::spawn(async move {
+            let server_cert_path = home_dir().unwrap().join(".config/rust-integration-services/certs/localhost+2.pem");
+            let server_key_path = home_dir().unwrap().join(".config/rust-integration-services/certs/localhost+2-key.pem");
+            HttpReceiver::new("127.0.0.1:8080")
+            .tls(server_cert_path, server_key_path)
+            .route("GET", "/", async move |_uuid, _request| {
+                HttpResponse::ok()
+            })
+            .on_event(async move |event| {
+                match event {
+                    HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => eprintln!("Connection[{}]: {}", uuid, ip),
+                    HttpReceiverEventSignal::OnRequest(uuid, request) => eprintln!("Request[{}]: {:?}", uuid, request),
+                    HttpReceiverEventSignal::OnResponse(uuid, response) => eprintln!("Response[{}]: {:?}", uuid, response),
+                    HttpReceiverEventSignal::OnConnectionClosed(uuid) => eprintln!("Closed[{}]", uuid),
+                    HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => eprintln!("Failed[{}]: {}", uuid, err),
+                }
+            })
+            .receive()
+            .await;
+        });
+
+        tokio::time::advance(Duration::from_millis(100)).await;
+        let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
+        let client = HttpSender::new().root_ca(root_ca_path);
+        let result = client.send("https://127.0.0.1:8080", HttpRequest::get()).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status.code(), 200);
+    }
+
+    #[tokio::test]
+    async fn http1_sender() {
+        let result = HttpSender::new().send("http://httpbin.org/get", HttpRequest::get()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn http1_sender_tls() {
+        let result = HttpSender::new().send("https://httpbin.org/get", HttpRequest::get()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn http_status() {
+        assert_eq!(HttpStatus::Ok.code(), 200);
+        assert_eq!(HttpStatus::BadRequest.code(), 400);
+        assert_eq!(HttpStatus::NotFound.code(), 404);
+        assert_eq!(HttpStatus::InternalServerError.code(), 500);
+    }
+
+    #[tokio::test]
+    async fn http_method() {
+        assert_eq!(HttpMethod::Get.as_str(), "GET");
+        assert_eq!(HttpMethod::Post.as_str(), "POST");
+        assert_eq!(HttpMethod::Delete.as_str(), "DELETE");
+    }
+
+    #[tokio::test]
+    async fn http_request() {
+        let request = HttpRequest::get().body(b"test").header("test", "test");
+        assert_eq!(request.method.as_str(), "GET");
+        assert_eq!(request.body, b"test");
+        assert_eq!(request.headers.get("test").unwrap(), "test");
+    }
+
+    #[tokio::test]
+    async fn http_response() {
+        let response = HttpResponse::ok().body(b"test").header("test", "test");
+        assert_eq!(response.status.code(), 200);
+        assert_eq!(response.status.text(), "OK");
+        assert_eq!(response.body, b"test");
+        assert_eq!(response.headers.get("test").unwrap(), "test");
     }
 }

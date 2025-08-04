@@ -1,46 +1,24 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::sync::Arc;
-use rustls::pki_types::PrivateKeyDer;
+use std::{collections::HashMap, convert::Infallible, path::Path, pin::Pin, sync::Arc};
+
+use http_body_util::{BodyExt, Full};
+use hyper::{body::{Bytes, Incoming}, header::{HeaderName, HeaderValue}, service::service_fn, Request, Response};
+use hyper_util::rt::TokioIo;
 use rustls::ServerConfig;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
-use tokio::net::TcpStream;
-use tokio::signal::unix::signal;
-use tokio::signal::unix::SignalKind;
-use tokio::sync::mpsc;
-use tokio::task::JoinSet;
+use tokio::{net::TcpListener, net::TcpStream, signal::unix::{signal, SignalKind}, sync::mpsc::{self, Sender}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use crate::utils::error::Error;
-
-use super::http_request::HttpRequest;
-use super::http_response::HttpResponse;
-
-pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
-impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncStream for T {}
+use crate::{http::{http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse}, utils::{crypto::Crypto, result::ResultDyn}};
 
 type RouteCallback = Arc<dyn Fn(String, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum HttpReceiverEventSignal {
-    OnConnectionReceived(String, String),
-    OnRequestSuccess(String, HttpRequest),
-    OnRequestError(String, String),
-    OnResponseSuccess(String, HttpResponse),
-    OnResponseError(String, String),
-}
-
-pub struct TlsConfig {
-    cert_path: PathBuf,
-    key_path: PathBuf,
+    OnConnectionOpened(String, String),
+    OnRequest(String, HttpRequest),
+    OnResponse(String, HttpResponse),
+    OnConnectionClosed(String),
+    OnConnectionFailed(String, String),
 }
 
 pub struct HttpReceiver {
@@ -49,10 +27,11 @@ pub struct HttpReceiver {
     event_broadcast: mpsc::Sender<HttpReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<HttpReceiverEventSignal>>,
     event_join_set: JoinSet<()>,
-    tls_config: Option<TlsConfig>,
+    tls_config: Option<ServerConfig>,
 }
 
 impl HttpReceiver {
+    /// Creates a new `HttpReceiver` instance bound to the specified host address. Example: `127.0.0.1:8080`.
     pub fn new<T: AsRef<str>>(host: T) -> Self {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         HttpReceiver {
@@ -65,32 +44,49 @@ impl HttpReceiver {
         }
     }
 
-    pub fn route<T, Fut, S>(mut self, method: S, route: S, callback: T) -> Self
+    /// Enables TLS for incoming connections using the provided server certificate and private key in `.pem` format and
+    /// configures the TLS context and sets supported ALPN protocols to allow HTTP/2, HTTP/1.1, and HTTP/1.0.
+    pub fn tls<T: AsRef<Path>>(mut self, tls_server_cert_path: T, tls_server_key_path: T) -> Self {
+        let mut tls_config = Self::create_tls_config(tls_server_cert_path, tls_server_key_path).expect("Failed to create TLS config");
+        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+
+        self.tls_config = Some(tls_config);
+        self
+    }
+
+    fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> ResultDyn<ServerConfig> {
+        let certs = Crypto::pem_load_certs(cert_path)?;
+        let key = Crypto::pem_load_private_key(key_path)?;
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)?;
+
+        Ok(config)
+    }
+
+    /// Registers a route with a specific HTTP method and path, associating it with a handler callback.
+    pub fn route<T, Fut, S>(mut self, method: S, path: S, callback: T) -> Self
     where
         T: Fn(String, HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
         S: AsRef<str>,
     {
-        self.routes.insert(format!("{}|{}", method.as_ref().to_uppercase(), route.as_ref()), Arc::new(move |uuid, request| Box::pin(callback(uuid, request))));
+        self.routes.insert(format!("{}|{}", method.as_ref().to_uppercase(), path.as_ref()), Arc::new(move |uuid, request| Box::pin(callback(uuid, request))));
         self
     }
 
-    pub fn tls<T: AsRef<Path>>(mut self, cert_path: T, key_path: T) -> Self {
-        self.tls_config = Some(TlsConfig {
-            cert_path: cert_path.as_ref().to_path_buf(),
-            key_path: key_path.as_ref().to_path_buf(),
-        });
-        self
-    }
-
+    /// Registers an asynchronous event handler callback for incoming `HttpReceiverEventSignal`s.
+    ///
+    /// This sets up a background task that listens for system signals (SIGTERM, SIGINT)
+    /// and incoming events from the internal event channel.
     pub fn on_event<T, Fut>(mut self, handler: T) -> Self
     where
         T: Fn(HttpReceiverEventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let mut receiver = self.event_receiver.unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
         
         self.event_join_set.spawn(async move {
             loop {
@@ -111,143 +107,132 @@ impl HttpReceiver {
         self
     }
 
-    pub async fn receive(mut self) -> tokio::io::Result<()> {
-        let listener = TcpListener::bind(&self.host).await?;
-        let tls_acceptor = self.tls_config.as_ref().map(|tls_cert| {
-            let config = Arc::new(Self::create_tls_config(&tls_cert.cert_path, &tls_cert.key_path).unwrap());
-            TlsAcceptor::from(config)
-        });
+    async fn incoming_request(req: Request<Incoming>, uuid: String, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) -> Result<Response<Full<Bytes>>, Infallible> {
+        let request = Self::build_http_request(req).await;
+        event_broadcast.send(HttpReceiverEventSignal::OnRequest(uuid.clone(), request.clone())).await.unwrap();
 
-        let routes = Arc::new(self.routes.clone());
-        let mut join_set_main = JoinSet::new();
-        let mut sigterm = signal(SignalKind::terminate())?;
-        let mut sigint = signal(SignalKind::interrupt())?;
+        match routes.get(&format!("{}|{}", &request.method.as_str(), &request.path)) {
+            Some(callback) => {
+                let response = callback(uuid.clone(), request.clone()).await;
+                let res = Self::build_http_response(response.clone()).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid.clone(), response)).await.unwrap();
+                Ok(res)
+            },
+            None => {
+                let response = HttpResponse::not_found();
+                let res = Self::build_http_response(response.clone()).await;
+                event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid.clone(), response)).await.unwrap();
+                Ok(res)
+            },
+        }
+    }
+
+    /// Starts the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
+    ///
+    /// This method binds to the configured host address and enters a loop to accept new TCP connections.
+    /// It also listens for system termination signals (SIGINT, SIGTERM) to gracefully shut down the server.
+    pub async fn receive(mut self) {
+        let tls_acceptor = self.tls_config.map(|tls_config| {
+            TlsAcceptor::from(Arc::new(tls_config))
+        });
+        let listener = TcpListener::bind(&self.host).await.expect("Failed to start TCP Listener");
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
+        let mut join_set = JoinSet::new();
         
         loop {
             tokio::select! {
                 _ = sigterm.recv() => break,
                 _ = sigint.recv() => break,
                 result = listener.accept() => {
-                    let (mut stream, client_addr) = result.unwrap();
-                    let routes = Arc::clone(&routes);
+                    let (tcp_stream, client_addr) = result.unwrap();
+                    let uuid = Uuid::new_v4().to_string();
                     let event_broadcast = Arc::new(self.event_broadcast.clone());
                     let tls_acceptor = tls_acceptor.clone();
-                    let uuid = Uuid::new_v4().to_string();
-
-                    event_broadcast.send(HttpReceiverEventSignal::OnConnectionReceived(uuid.clone(), client_addr.ip().to_string())).await.unwrap();
-                    join_set_main.spawn(async move {
-                        let mut stream: Box<dyn AsyncStream> = match tls_acceptor {
-                            Some(acceptor) => {
-                                match Self::is_connection_tls(&stream).await {
-                                    Ok(_) => {},
-                                    Err(err) => {
-                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(uuid.clone(), err.to_string())).await.unwrap();
-                                        let response = HttpResponse::internal_server_error();
-                                        match stream.write_all(&response.to_bytes()).await {
-                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
-                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
-                                        };
-                                        return;
-                                    },
-                                };
-
-                                match acceptor.accept(&mut stream).await {
-                                    Ok(tls_stream) => Box::new(tls_stream),
-                                    Err(err) => {
-                                        let err = format!("TLS handshake failed: {}", err.to_string());
-                                        event_broadcast.send(HttpReceiverEventSignal::OnRequestError(uuid.clone(), err.to_string())).await.unwrap();
-                                        let response = HttpResponse::internal_server_error();
-                                        match stream.write_all(&response.to_bytes()).await {
-                                            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
-                                            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
-                                        };
-                                        return;
-                                    },
-                                }
-                            },
-                            None => Box::new(stream),
-                        };
-
-                        let request = match HttpRequest::from_stream(&mut stream).await {
-                            Ok(request) => request.ip(client_addr.ip().to_string()),
-                            Err(err) => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestError(uuid.clone(), err.to_string())).await.unwrap();
-                                let response = HttpResponse::internal_server_error();
-                                match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
-                                };
-                                return;
-                            }
-                        };
-
-                        match routes.get(&format!("{}|{}", &request.method, &request.path)) {
-                            None => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(uuid.clone(), request.clone())).await.unwrap();
-                                let response = HttpResponse::not_found();
-                                match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
-                                };
-                            },
-                            Some(callback) => {
-                                event_broadcast.send(HttpReceiverEventSignal::OnRequestSuccess(uuid.clone(), request.clone())).await.unwrap();
-                                let mut response = callback(uuid.clone(), request).await;
-                                if !response.body.is_empty() {
-                                    response.headers.insert(String::from("Content-Length"), response.body.len().to_string());
-                                }
-                                match stream.write_all(&response.to_bytes()).await {
-                                    Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnResponseSuccess(uuid.clone(), response.clone())).await.unwrap(),
-                                    Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnResponseError(uuid.clone(), err.to_string())).await.unwrap(),
-                                };
-                            }
-                        }
-                    });
+                    let routes = Arc::new(self.routes.clone());
+                    
+                    event_broadcast.send(HttpReceiverEventSignal::OnConnectionOpened(uuid.clone(), client_addr.ip().to_string())).await.unwrap();
+                    match tls_acceptor {
+                        Some(acceptor) => {
+                            join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, routes, event_broadcast));
+                        },
+                        None => {
+                            join_set.spawn(Self::tcp_connection(tcp_stream, uuid, routes, event_broadcast));
+                        },
+                    }
                 }
             }
         }
 
-        while let Some(_) = join_set_main.join_next().await {}
+        while let Some(_) = join_set.join_next().await {}
         while let Some(_) = self.event_join_set.join_next().await {}
-
-        Ok(())
     }
 
-    async fn is_connection_tls(stream: &TcpStream) -> tokio::io::Result<()> {
-        let mut peek_buffer = [0u8; 8];
-        match stream.peek(&mut peek_buffer).await {
-            Ok(len) if len >= 3 => {
-                // Check for TLS ClientHello Signature.
-                let is_tls_client_sig = peek_buffer[0] == 0x16 && peek_buffer[1] == 0x03 && (0x01..=0x03).contains(&peek_buffer[2]);
-                if is_tls_client_sig {
-                    return Ok(())
-                }
-                Err(Error::tokio_io("Non-TLS request on TLS receiver."))
-            },
-            Ok(_) => Err(Error::tokio_io("Could not determine TLS signature.")),
-            Err(err) => Err(err),
+    async fn tcp_connection(tcp_stream: TcpStream, uuid: String, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+        let uuid_clone = uuid.clone();
+        let event_broadcast_clone = event_broadcast.clone();
+        let io = TokioIo::new(tcp_stream);
+        let service = service_fn(move |req| {
+            Self::incoming_request(req, uuid_clone.clone(), routes.clone(), event_broadcast_clone.to_owned())
+        });
+        
+        match hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
+            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionClosed(uuid)).await.unwrap(),
+            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, err.to_string())).await.unwrap(),
         }
     }
-    
-    fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> std::io::Result<ServerConfig> {
-        let cert_file = File::open(cert_path)?;
-        let mut cert_reader = BufReader::new(cert_file);
-        let certs = rustls_pemfile::certs(&mut cert_reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| Error::std_io("Invalid certificate"))?;
 
-        let key_file = File::open(key_path)?;
-        let mut key_reader = BufReader::new(key_file);
-        let mut keys = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| Error::std_io("Invalid private key"))?;
+    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, uuid: String, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+        let tls_stream = match tls_acceptor.accept(tcp_stream).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, format!("TLS handshake failed: {:?}", err))).await.unwrap();
+                return;
+            },
+        };
+        
+        let uuid_clone = uuid.clone();
+        let event_broadcast_clone = event_broadcast.clone();
+        let io = TokioIo::new(tls_stream);
+        let service = service_fn(move |req| {
+            Self::incoming_request(req, uuid_clone.clone(), routes.clone(), event_broadcast_clone.to_owned())
+        });
+        
+        match hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
+            Ok(_) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionClosed(uuid)).await.unwrap(),
+            Err(err) => event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, format!("Connection failed: {:?}", err))).await.unwrap(),
+        }
+    }
 
-        let key = keys.pop().unwrap();
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, PrivateKeyDer::Pkcs8(key))
-            .map_err(|err| Error::std_io(err.to_string()))?;
+    async fn build_http_request(req: Request<Incoming>) -> HttpRequest {
+        let (parts, body) = req.into_parts();
+        let mut request = HttpRequest::new();
+        request.method = HttpMethod::from_str(parts.method.as_str()).unwrap();
+        request.path = parts.uri.path().to_string();
+        request.version = match parts.version {
+            hyper::Version::HTTP_09 => String::from("HTTP/0.9"),
+            hyper::Version::HTTP_10 => String::from("HTTP/1.0"),
+            hyper::Version::HTTP_11 => String::from("HTTP/1.1"),
+            hyper::Version::HTTP_2 => String::from("HTTP/2"),
+            hyper::Version::HTTP_3 => String::from("HTTP/3"),
+            _ => String::new(),
+        };
+        for (key, value) in parts.headers {
+            if let (Some(key), Ok(value)) = (key, value.to_str()) {
+                request.headers.insert(key.to_string(), value.to_string());
+            }
+        }
+        request.body = body.collect().await.unwrap().to_bytes().to_vec();
+        request
+    }
 
-        Ok(config)
+    async fn build_http_response(res: HttpResponse) -> Response<Full<Bytes>> {
+        let mut response: Response<Full<Bytes>> = Response::builder().status(res.status.code()).body(res.body.into()).unwrap();
+        for (key, value) in res.headers {
+            let header_name = HeaderName::from_bytes(key.as_bytes()).unwrap();
+            let header_value = HeaderValue::from_str(&value).unwrap();
+            response.headers_mut().insert(header_name, header_value);
+        }
+        response
     }
 }
