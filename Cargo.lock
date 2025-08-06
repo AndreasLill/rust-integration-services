@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "rust-integration-services"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-ssh2-lite",
  "chrono",

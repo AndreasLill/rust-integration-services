@@ -12,6 +12,8 @@ use crate::{http::{http_executor::HttpExecutor, http_request::HttpRequest, http_
 
 pub struct HttpSender {
     root_cert_store: RootCertStore,
+    http1_only: bool,
+    http2_only: bool,
 }
 
 impl HttpSender {
@@ -27,6 +29,8 @@ impl HttpSender {
 
         HttpSender {
             root_cert_store,
+            http1_only: false,
+            http2_only: false,
         }
     }
 
@@ -40,6 +44,18 @@ impl HttpSender {
         for cert in certs {
             self.root_cert_store.add(cert).expect("Could not add root CA to root store");
         }
+        self
+    }
+
+    /// Force the use of HTTP/1.1.
+    pub fn http1_only(mut self) -> Self {
+        self.http1_only = true;
+        self
+    }
+
+    /// Force the use of HTTP/2.
+    pub fn http2_only(mut self) -> Self {
+        self.http2_only = true;
         self
     }
 
@@ -58,15 +74,24 @@ impl HttpSender {
         let url = url.as_ref().parse::<Uri>()?;
         let scheme = url.scheme_str().ok_or("URL is missing a scheme.")?;
 
+        if self.http1_only && self.http2_only {
+            return Err(Box::new(Error::tokio_io("Use of both http1_only and http2_only")));
+        }
+
         match scheme {
-            "http" => self.send_http(url, request).await,
-            "https" => self.send_https(url, request).await,
+            "http" => {
+                if self.http2_only {
+                    return Err(Box::new(Error::tokio_io("https scheme is required for HTTP/2")));
+                }
+                self.send_tcp(url, request).await
+            },
+            "https" => self.send_tls(url, request).await,
             _ => Err(Box::new(Error::tokio_io(format!("Unsupported scheme: {}", scheme))))
         }
     }
 
     
-    async fn send_http(&self, url: Uri, request: HttpRequest) -> ResultDyn<HttpResponse> {
+    async fn send_tcp(&self, url: Uri, request: HttpRequest) -> ResultDyn<HttpResponse> {
         let host = url.host().ok_or("Invalid URL.")?;
         let port = url.port_u16().unwrap_or(80);
         
@@ -86,7 +111,7 @@ impl HttpSender {
         Ok(response)
     }
     
-    async fn send_https(&self, url: Uri, request: HttpRequest) -> ResultDyn<HttpResponse> {
+    async fn send_tls(&self, url: Uri, request: HttpRequest) -> ResultDyn<HttpResponse> {
         let host = url.host().ok_or("Invalid URL.")?;
         let port = url.port_u16().unwrap_or(443);
         let domain = rustls::pki_types::ServerName::try_from(host.to_string())?;
@@ -94,15 +119,33 @@ impl HttpSender {
         let mut tls_config = ClientConfig::builder()
         .with_root_certificates(self.root_cert_store.clone())
         .with_no_client_auth();
-        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+        if self.http1_only {
+            tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        } else if self.http2_only {
+            tls_config.alpn_protocols = vec![b"h2".to_vec()];
+        } else {
+            tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        }
     
         let tcp_stream = TcpStream::connect((host, port)).await?;
         let tls_connector = TlsConnector::from(Arc::new(tls_config));
         let tls_stream = tls_connector.connect(domain, tcp_stream).await?;
-        let protocol = tls_stream.get_ref().1.alpn_protocol();
 
-        match protocol.as_deref() {
-            Some(b"h2") => {
+        let version = if self.http1_only {
+            Version::HTTP_11
+        } else if self.http2_only {
+            Version::HTTP_2
+        } else {
+            let protocol = tls_stream.get_ref().1.alpn_protocol();
+            match protocol.as_deref() {
+                Some(b"h2") => Version::HTTP_2,
+                _ => Version::HTTP_11,
+            }
+        };
+
+        match version {
+            Version::HTTP_2 => {
                 let io = TokioIo::new(tls_stream);
                 let (mut sender, connection) = hyper::client::conn::http2::Builder::new(HttpExecutor).handshake(io).await.unwrap();
                 
@@ -115,11 +158,11 @@ impl HttpSender {
                 let response = Self::build_http_response(res).await?;
                 
                 Ok(response)
-            },
-            _ => {
+            }
+            Version::HTTP_11 => {
                 let io = TokioIo::new(tls_stream);
                 let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await.unwrap();
-
+        
                 tokio::spawn(async move {
                     connection.await
                 });
@@ -129,6 +172,9 @@ impl HttpSender {
                 let response = Self::build_http_response(res).await?;
                 Ok(response)
             }
+            _ => {
+                Err(Box::new(Error::std_io("Unsupported HTTP version")))
+            }
         }
     }
 
@@ -136,7 +182,7 @@ impl HttpSender {
         match version {
             Version::HTTP_2 => {
                 let mut req: Request<Full<Bytes>> = Request::builder()
-                    .version(Version::HTTP_2)
+                    .version(version)
                     .method(request.method.as_str())
                     .uri(url.clone())
                     .body(request.body.into())?;
@@ -154,7 +200,7 @@ impl HttpSender {
                 let path = url.path();
 
                 let mut req: Request<Full<Bytes>> = Request::builder()
-                    .version(Version::HTTP_11)
+                    .version(version)
                     .method(request.method.as_str())
                     .uri(path)
                     .header(hyper::header::HOST, authority.as_str())
