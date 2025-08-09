@@ -77,9 +77,9 @@ mod test {
             .await;
         });
 
-        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::time::advance(Duration::from_millis(200)).await;
         let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
-        let client = HttpSender::new().root_ca(root_ca_path);
+        let client = HttpSender::new().add_root_ca(root_ca_path);
         let result = client.send("https://127.0.0.1:8080", HttpRequest::get()).await;
         assert!(result.is_ok());
         let response = result.unwrap();

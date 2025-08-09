@@ -18,11 +18,11 @@ pub struct HttpSender {
 
 impl HttpSender {
     /// Creates a new `HttpSender` instance with a default set of trusted root CAs.
-    ///
-    /// This initializes the internal `RootCertStore` with the Mozilla-recommended `TLS_SERVER_ROOTS` for use in TLS client connections.
     /// 
-    /// To use a custom root certificate authority (CA), call the [`tls_root_ca()`] method
-    /// before sending the request. This will override the default trust store.
+    /// By default, the client trusts the Mozilla root certificates provided by the
+    /// [`webpki_roots`](https://docs.rs/webpki-roots) crate to validate server certificates.
+    /// 
+    /// To add a custom Certificate Authority (CA), use [`add_root_ca()`] before sending the request.
     pub fn new() -> Self {
         let mut root_cert_store = RootCertStore::empty();
         root_cert_store.extend(TLS_SERVER_ROOTS.iter().cloned());
@@ -34,13 +34,10 @@ impl HttpSender {
         }
     }
 
-    /// Sets a custom root certificate authority (CA) in PEM format for verifying TLS connections.
-    /// 
-    /// This overrides the default Mozilla trust store used for HTTPS connections.
-    pub fn root_ca<T: AsRef<Path>>(mut self, root_ca_path: T) -> Self {
+    /// Add a custom root certificate authority (CA) in PEM format for verifying TLS connections.
+    pub fn add_root_ca<T: AsRef<Path>>(mut self, root_ca_path: T) -> Self {
         let certs = Crypto::pem_load_certs(root_ca_path).expect("Could not load Root CA");
         
-        self.root_cert_store = RootCertStore::empty();
         for cert in certs {
             self.root_cert_store.add(cert).expect("Could not add root CA to root store");
         }
@@ -64,12 +61,6 @@ impl HttpSender {
     /// If the URL scheme is `"http"`, HTTP/1.1 will be used for the request.
     /// 
     /// If the URL scheme is `"https"`, a secure TLS connection is established and ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
-    /// 
-    /// By default, the client trusts the Mozilla root certificates provided by the
-    /// [`webpki_roots`](https://docs.rs/webpki-roots) crate to validate server certificates.
-    /// 
-    /// To override the default root certificate store and use a custom Certificate Authority (CA),
-    /// call [`tls_root_ca()`] before sending the request.
     pub async fn send<T: AsRef<str>>(&self, url: T, request: HttpRequest) -> ResultDyn<HttpResponse> {
         let url = url.as_ref().parse::<Uri>()?;
         let scheme = url.scheme_str().ok_or("URL is missing a scheme.")?;
@@ -179,43 +170,35 @@ impl HttpSender {
     }
 
     async fn build_http_request(url: Uri, request: HttpRequest, version: Version) -> ResultDyn<Request<Full<Bytes>>> {
-        match version {
+        let mut req = match version {
             Version::HTTP_2 => {
-                let mut req: Request<Full<Bytes>> = Request::builder()
+                Request::builder()
                     .version(version)
                     .method(request.method.as_str())
                     .uri(url.clone())
-                    .body(request.body.into())?;
-
-                for (key, value) in request.headers {
-                    let header_name = HeaderName::from_bytes(key.as_bytes())?;
-                    let header_value = HeaderValue::from_str(&value)?;
-                    req.headers_mut().insert(header_name, header_value);
-                }
-
-                Ok(req)
+                    .body(request.body.into())?
             }
             Version::HTTP_11 => {
                 let authority = url.authority().ok_or("Invalid URL.")?;
                 let path = url.path();
 
-                let mut req: Request<Full<Bytes>> = Request::builder()
+                Request::builder()
                     .version(version)
                     .method(request.method.as_str())
                     .uri(path)
                     .header(hyper::header::HOST, authority.as_str())
-                    .body(request.body.into())?;
-
-                for (key, value) in request.headers {
-                    let header_name = HeaderName::from_bytes(key.as_bytes())?;
-                    let header_value = HeaderValue::from_str(&value)?;
-                    req.headers_mut().insert(header_name, header_value);
-                }
-
-                Ok(req)
+                    .body(request.body.into())?
             }
-            _ => Err(Box::new(Error::std_io("Unsupported HTTP version")))
+            _ => return Err(Box::new(Error::std_io("Unsupported HTTP version")))
+        };
+
+        for (key, value) in request.headers {
+            let header_name = HeaderName::from_bytes(key.as_bytes())?;
+            let header_value = HeaderValue::from_str(&value)?;
+            req.headers_mut().insert(header_name, header_value);
         }
+
+        Ok(req)
     }
 
     async fn build_http_response(res: Response<Incoming>) -> ResultDyn<HttpResponse> {
