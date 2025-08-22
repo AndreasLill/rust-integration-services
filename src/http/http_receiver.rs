@@ -1,8 +1,9 @@
-use std::{collections::HashMap, convert::Infallible, path::Path, pin::Pin, sync::Arc};
+use std::{convert::Infallible, path::Path, pin::Pin, sync::Arc};
 
 use http_body_util::{BodyExt, Full};
 use hyper::{body::{Bytes, Incoming}, header::{HeaderName, HeaderValue}, service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
+use matchit::Router;
 use rustls::ServerConfig;
 use tokio::{net::TcpListener, net::TcpStream, signal::unix::{signal, SignalKind}, sync::mpsc::{self, Sender}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
@@ -22,7 +23,7 @@ pub enum HttpReceiverEventSignal {
 
 pub struct HttpReceiver {
     host: String,
-    routes: HashMap<String, RouteCallback>,
+    router: Router<RouteCallback>,
     event_broadcast: mpsc::Sender<HttpReceiverEventSignal>,
     event_receiver: Option<mpsc::Receiver<HttpReceiverEventSignal>>,
     event_join_set: JoinSet<()>,
@@ -35,7 +36,7 @@ impl HttpReceiver {
         let (event_broadcast, event_receiver) = mpsc::channel(128);
         HttpReceiver {
             host: host.as_ref().to_string(),
-            routes: HashMap::new(),
+            router: Router::new(),
             event_broadcast,
             event_receiver: Some(event_receiver),
             event_join_set: JoinSet::new(),
@@ -63,14 +64,14 @@ impl HttpReceiver {
         Ok(config)
     }
 
-    /// Registers a route with a specific HTTP method and path, associating it with a handler callback.
-    pub fn route<T, Fut, S>(mut self, method: S, path: S, callback: T) -> Self
+    /// Registers a route with a path, associating it with a handler callback.
+    pub fn route<T, Fut, S>(mut self, path: S, callback: T) -> Self
     where
         T: Fn(String, HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
         S: AsRef<str>,
     {
-        self.routes.insert(format!("{}|{}", method.as_ref().to_uppercase(), path.as_ref()), Arc::new(move |uuid, request| Box::pin(callback(uuid, request))));
+        self.router.insert(path.as_ref(), Arc::new(move |uuid, request| Box::pin(callback(uuid, request)))).expect(&format!("Invalid route path: {}", path.as_ref()));
         self
     }
 
@@ -106,21 +107,22 @@ impl HttpReceiver {
         self
     }
 
-    async fn incoming_request(req: Request<Incoming>, uuid: String, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) -> Result<Response<Full<Bytes>>, Infallible> {
+    async fn incoming_request(req: Request<Incoming>, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) -> Result<Response<Full<Bytes>>, Infallible> {
         let request = Self::build_http_request(req).await;
         event_broadcast.send(HttpReceiverEventSignal::OnRequest(uuid.clone(), request.clone())).await.unwrap();
 
-        match routes.get(&format!("{}|{}", &request.method.as_str(), &request.path)) {
-            Some(callback) => {
-                let response = callback(uuid.clone(), request.clone()).await;
+        match router.at(&request.path) {
+            Ok(matched) => {
+                let callback = matched.value;
+                let response = callback(uuid.clone(), request).await;
                 let res = Self::build_http_response(response.clone()).await;
-                event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid.clone(), response)).await.unwrap();
+                event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid, response)).await.unwrap();
                 Ok(res)
             },
-            None => {
+            Err(_) => {
                 let response = HttpResponse::not_found();
                 let res = Self::build_http_response(response.clone()).await;
-                event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid.clone(), response)).await.unwrap();
+                event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid, response)).await.unwrap();
                 Ok(res)
             },
         }
@@ -148,15 +150,15 @@ impl HttpReceiver {
                     let uuid = Uuid::new_v4().to_string();
                     let event_broadcast = Arc::new(self.event_broadcast.clone());
                     let tls_acceptor = tls_acceptor.clone();
-                    let routes = Arc::new(self.routes.clone());
+                    let router = Arc::new(self.router.clone());
                     
                     event_broadcast.send(HttpReceiverEventSignal::OnConnectionOpened(uuid.clone(), client_addr.ip().to_string())).await.unwrap();
                     match tls_acceptor {
                         Some(acceptor) => {
-                            join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, routes, event_broadcast));
+                            join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, router, event_broadcast));
                         },
                         None => {
-                            join_set.spawn(Self::tcp_connection(tcp_stream, uuid, routes, event_broadcast));
+                            join_set.spawn(Self::tcp_connection(tcp_stream, uuid, router, event_broadcast));
                         },
                     }
                 }
@@ -167,12 +169,12 @@ impl HttpReceiver {
         while let Some(_) = self.event_join_set.join_next().await {}
     }
 
-    async fn tcp_connection(tcp_stream: TcpStream, uuid: String, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+    async fn tcp_connection(tcp_stream: TcpStream, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
         let uuid_clone = uuid.clone();
         let event_broadcast_clone = event_broadcast.clone();
         let io = TokioIo::new(tcp_stream);
         let service = service_fn(move |req| {
-            Self::incoming_request(req, uuid_clone.to_owned(), routes.clone(), event_broadcast_clone.to_owned())
+            Self::incoming_request(req, uuid_clone.to_owned(), router.clone(), event_broadcast_clone.to_owned())
         });
         
         if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
@@ -180,7 +182,7 @@ impl HttpReceiver {
         }
     }
 
-    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, uuid: String, routes: Arc<HashMap<String, RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
+    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
@@ -192,7 +194,7 @@ impl HttpReceiver {
         let uuid_clone = uuid.clone();
         let event_broadcast_clone = event_broadcast.clone();
         let service = service_fn(move |req| {
-            Self::incoming_request(req, uuid_clone.to_owned(), routes.clone(), event_broadcast_clone.to_owned())
+            Self::incoming_request(req, uuid_clone.to_owned(), router.clone(), event_broadcast_clone.to_owned())
         });
         
         let io = TokioIo::new(tls_stream);

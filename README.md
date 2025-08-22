@@ -2,20 +2,27 @@
 
 A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability. It simplifies the development of scalable integrations for receiving and sending data, with built-in support for common protocols.
 
+[![Crates.io](https://img.shields.io/crates/v/rust-integration-services.svg)](https://crates.io/crates/rust-integration-services)
+![Rust Version](https://img.shields.io/badge/rustc-1.70+-blue.svg)
+[![Docs.rs](https://docs.rs/rust-integration-services/badge.svg)](https://docs.rs/rust-integration-services)  
+[![License](https://img.shields.io/crates/l/rust-integration-services.svg)](https://github.com/AndreasLill/rust-integration-services#license)
+
 ## Installation
 
 Add rust-integration-services to your project Cargo.toml with all or select features.
 
-All features
+**All features**
 ``` toml
 [dependencies]
-rust-integration-services = { version = "0.2.3" }
+tokio = { version = "1.47.1", features = ["full"] }
+rust-integration-services = "0.2.4"
 ```
 
-Select features
+**With select features**
 ``` toml
 [dependencies]
-rust-integration-services = { version = "0.2.3", default-features = false, features = ["file", "schedule", "sftp", "http"] }
+tokio = { version = "1.47.1", features = ["full"] }
+rust-integration-services = { version = "0.2.4", default-features = false, features = ["file", "schedule", "sftp", "http"] }
 ```
 
 ## Features
@@ -87,33 +94,27 @@ let result = ScheduleReceiver::new()
 ```
 ---
 ### HTTP
-The http module is built on top of the fast and reliable [`hyper`](https://docs.rs/hyper) HTTP library.
+The http module is built on top of the fast and reliable [`hyper`](https://crates.io/crates/hyper) HTTP library, and routing is handled using [`matchit`](https://crates.io/crates/matchit) url router library.
 
-It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-performance HTTP communication with automatic protocol negotiation via ALPN (Application-Layer Protocol Negotiation).
+It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-performance HTTP communication with automatic protocol negotiation via ALPN (Application-Layer Protocol Negotiation) with dynamic routing for REST.
 
 #### HttpReceiver
 
-Run a HTTP receiver listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path.
+Run a HTTP receiver listening on `127.0.0.1:8080` that handles requests on the root path.
 ``` rust
 HttpReceiver::new("127.0.0.1:8080")
-.route("GET", "/", async move |_uuid, _request| {
-    HttpResponse::ok()
-})
-.route("POST", "/", async move |_uuid, _request| {
+.route("/", async move |_uuid, _request| {
     HttpResponse::ok()
 })
 .receive()
 .await;
 ```
 
-Run a HTTP receiver with TLS listening on `127.0.0.1:8080` that handles `GET` and `POST` requests on the root path and log events.
+Run a HTTP receiver with TLS listening on `127.0.0.1:8080` that handles requests on the root path and log events.
 ``` rust
 HttpReceiver::new("127.0.0.1:8080")
 .tls("/home/user/cert.pem", "/home/user/key.pem")
-.route("GET", "/", async move |_uuid, _request| {
-    HttpResponse::ok()
-})
-.route("POST", "/", async move |_uuid, _request| {
+.route("/", async move |_uuid, _request| {
     HttpResponse::ok()
 })
 .on_event(async move |event| {
@@ -123,6 +124,16 @@ HttpReceiver::new("127.0.0.1:8080")
         HttpReceiverEventSignal::OnResponse(uuid, response) => println!("Response[{}]: {:?}", uuid, response),
         HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => println!("Failed[{}]: {}", uuid, err),
     }
+})
+.receive()
+.await;
+```
+
+Run a HTTP receiver listening on `127.0.0.1:8080` that handles requests with a dynamic route `/user/{id}` where `{id}` is a path parameter.
+``` rust
+HttpReceiver::new("127.0.0.1:8080")
+.route("/user/{id}", async move |_uuid, _request| {
+    HttpResponse::ok()
 })
 .receive()
 .await;

@@ -18,29 +18,20 @@ pub mod http_method;
 mod test {
     use std::{env::home_dir, time::Duration};
 
-    use crate::http::{http_method::HttpMethod, http_receiver::{HttpReceiver, HttpReceiverEventSignal}, http_request::HttpRequest, http_response::HttpResponse, http_sender::HttpSender, http_status::HttpStatus};
+    use crate::http::{http_method::HttpMethod, http_receiver::HttpReceiver, http_request::HttpRequest, http_response::HttpResponse, http_sender::HttpSender, http_status::HttpStatus};
 
     #[tokio::test(start_paused = true)]
     async fn http_receiver() {
         tokio::spawn(async move {
             HttpReceiver::new("127.0.0.1:8080")
-            .route("GET", "/", async move |_uuid, _request| {
+            .route("/", async move |_uuid, _request| {
                 HttpResponse::ok()
-            })
-            .on_event(async move |event| {
-                match event {
-                    HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => eprintln!("Connection[{}]: {}", uuid, ip),
-                    HttpReceiverEventSignal::OnRequest(uuid, request) => eprintln!("Request[{}]: {:?}", uuid, request),
-                    HttpReceiverEventSignal::OnResponse(uuid, response) => eprintln!("Response[{}]: {:?}", uuid, response),
-                    HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => eprintln!("Failed[{}]: {}", uuid, err),
-                }
             })
             .receive()
             .await;
         });
 
-        tokio::time::advance(Duration::from_millis(100)).await;
-
+        tokio::time::advance(Duration::from_millis(200)).await;
         let result = HttpSender::new().send("http://127.0.0.1:8080", HttpRequest::get()).await;
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -62,16 +53,8 @@ mod test {
             let server_key_path = home_dir().unwrap().join(".config/rust-integration-services/certs/localhost+2-key.pem");
             HttpReceiver::new("127.0.0.1:8080")
             .tls(server_cert_path, server_key_path)
-            .route("GET", "/", async move |_uuid, _request| {
+            .route("/", async move |_uuid, _request| {
                 HttpResponse::ok()
-            })
-            .on_event(async move |event| {
-                match event {
-                    HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => eprintln!("Connection[{}]: {}", uuid, ip),
-                    HttpReceiverEventSignal::OnRequest(uuid, request) => eprintln!("Request[{}]: {:?}", uuid, request),
-                    HttpReceiverEventSignal::OnResponse(uuid, response) => eprintln!("Response[{}]: {:?}", uuid, response),
-                    HttpReceiverEventSignal::OnConnectionFailed(uuid, err) => eprintln!("Failed[{}]: {}", uuid, err),
-                }
             })
             .receive()
             .await;
