@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 tokio = { version = "1.47.1", features = ["full", "test-util"] }
-uuid = { version = "1.18.0", features = ["v4"]}
+uuid = { version = "1.18.1", features = ["v4"] }
 
 hyper = { version = "1.7.0", optional = true, features = ["full"] }
 hyper-util = { version = "0.1", optional = true, features = ["full"] }
@@ -25,13 +25,14 @@ rustls = { version = "0.23.31", optional = true }
 tokio-rustls = { version = "0.26.2", optional = true } 
 webpki-roots = { version = "1.0.2", optional = true }
 rustls-pemfile = { version = "2.2.0", optional = true }
-regex = { version = "1", optional = true }
-chrono = { version = "0.4.41", optional = true }
+regex = { version = "1.11.2", optional = true }
+chrono = { version = "0.4.42", optional = true }
 async-ssh2-lite = { version = "0.5", features = ["tokio"], optional = true }
 futures-util = { version = "0.3", optional = true }
 
 [features]
-default = ["file", "schedule", "sftp", "http"]
+default = []
+full = ["file", "schedule", "sftp", "http"]
 http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "matchit"]
 file = ["regex"]
 schedule = ["chrono"]

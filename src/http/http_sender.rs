@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::{http::{http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, utils::{crypto::Crypto, error::Error, result::ResultDyn}};
+use crate::{http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, utils::{error::Error, result::ResultDyn}};
 
 pub struct HttpSender {
     root_cert_store: RootCertStore,
