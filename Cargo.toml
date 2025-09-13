@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -31,8 +31,7 @@ async-ssh2-lite = { version = "0.5", features = ["tokio"], optional = true }
 futures-util = { version = "0.3", optional = true }
 
 [features]
-default = []
-full = ["file", "schedule", "sftp", "http"]
+default = ["file", "schedule", "sftp", "http"]
 http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "matchit"]
 file = ["regex"]
 schedule = ["chrono"]
