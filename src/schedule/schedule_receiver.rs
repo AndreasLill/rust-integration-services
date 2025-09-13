@@ -1,6 +1,10 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveTime, Utc};
-use tokio::{signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet, time::sleep};
+use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 use uuid::Uuid;
+
+use crate::common::event_handler::EventHandler;
 
 use super::schedule_interval::ScheduleInterval;
 
@@ -12,19 +16,16 @@ pub enum ScheduleReceiverEventSignal {
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
     next_run: DateTime<Utc>,
-    event_broadcast: mpsc::Sender<ScheduleReceiverEventSignal>,
-    event_receiver: Option<mpsc::Receiver<ScheduleReceiverEventSignal>>,
+    event_handler: EventHandler<ScheduleReceiverEventSignal>,
     event_join_set: JoinSet<()>,
 }
 
 impl ScheduleReceiver {
     pub fn new() -> Self {
-        let (event_broadcast, event_receiver) = mpsc::channel(128);
         ScheduleReceiver {
             interval: ScheduleInterval::None,
             next_run: Utc::now(),
-            event_broadcast,
-            event_receiver: Some(event_receiver),
+            event_handler: EventHandler::new(),
             event_join_set: JoinSet::new(),
         }
     }
@@ -66,33 +67,15 @@ impl ScheduleReceiver {
         T: Fn(ScheduleReceiverEventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let mut receiver = self.event_receiver.unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
-        
-        self.event_join_set.spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = sigterm.recv() => break,
-                    _ = sigint.recv() => break,
-                    event = receiver.recv() => {
-                        match event {
-                            Some(event) => handler(event).await,
-                            None => break,
-                        }
-                    }
-                }
-            }
-        });
-        
-        self.event_receiver = None;
+        self.event_join_set = self.event_handler.init(handler);
         self
     }
 
-    pub async fn receive(mut self) -> tokio::io::Result<()> {
-        let mut join_set = JoinSet::new();
-        let mut sigterm = signal(SignalKind::terminate())?;
-        let mut sigint = signal(SignalKind::interrupt())?;
+    pub async fn receive(mut self) {
+        let mut receiver_join_set = JoinSet::new();
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
+        let event_broadcast = Arc::new(self.event_handler.broadcast());
 
         let now_timestamp = Utc::now().timestamp();
         let next_run_timestamp = self.next_run.timestamp();
@@ -100,7 +83,7 @@ impl ScheduleReceiver {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
-        join_set.spawn(async move {
+        receiver_join_set.spawn(async move {
             loop {
                 let now = Utc::now();
                 if let Ok(duration) = (self.next_run - now).to_std() {
@@ -108,7 +91,7 @@ impl ScheduleReceiver {
                 }
 
                 let uuid = Uuid::new_v4().to_string();
-                self.event_broadcast.send(ScheduleReceiverEventSignal::OnTrigger(uuid.to_string())).await.unwrap();
+                event_broadcast.send(ScheduleReceiverEventSignal::OnTrigger(uuid.to_string())).await.unwrap();
 
                 if self.interval == ScheduleInterval::None {
                     break;
@@ -121,14 +104,14 @@ impl ScheduleReceiver {
         loop {
             tokio::select! {
                 _ = sigterm.recv() => {
-                    join_set.abort_all();
+                    receiver_join_set.abort_all();
                     break;
                 },
                 _ = sigint.recv() => {
-                    join_set.abort_all();
+                    receiver_join_set.abort_all();
                     break;
                 },
-                task = join_set.join_next() => {
+                task = receiver_join_set.join_next() => {
                     if task.is_none() {
                         break;
                     }
@@ -137,8 +120,6 @@ impl ScheduleReceiver {
         }
 
         while let Some(_) = self.event_join_set.join_next().await {}
-
-        Ok(())
     }
 
     async fn calculate_next_run(next_run: DateTime<Utc>, interval: ScheduleInterval) -> DateTime<Utc> {

@@ -31,7 +31,7 @@ async-ssh2-lite = { version = "0.5", features = ["tokio"], optional = true }
 futures-util = { version = "0.3", optional = true }
 
 [features]
-default = []
+default = ["full"]
 full = ["file", "schedule", "sftp", "http"]
 http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "matchit"]
 file = ["regex"]

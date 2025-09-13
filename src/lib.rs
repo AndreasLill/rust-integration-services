@@ -1,4 +1,5 @@
-pub mod utils;
+mod utils;
+mod common;
 
 #[cfg(feature = "http")]
 pub mod http;

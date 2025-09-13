@@ -3,18 +3,18 @@ use std::path::{Path, PathBuf};
 use async_ssh2_lite::{AsyncFile, AsyncSession, SessionConfiguration, TokioTcpStream};
 use futures_util::{AsyncReadExt};
 use regex::Regex;
-use tokio::{fs::{File, OpenOptions}, io::AsyncWriteExt, signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet};
+use tokio::{fs::{File, OpenOptions}, io::AsyncWriteExt, task::JoinSet};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
 use super::sftp_auth::SftpAuth;
-use crate::utils::error::Error;
+use crate::{common::event_handler::EventHandler, utils::error::Error};
 
 #[derive(Clone)]
 pub enum SftpReceiverEventSignal {
     OnDownloadStart(String, PathBuf),
     OnDownloadSuccess(String, PathBuf),
-    OnDownloadFailed(String, PathBuf),
+    OnError(String, String),
 }
 
 pub struct SftpReceiver {
@@ -23,22 +23,19 @@ pub struct SftpReceiver {
     delete_after: bool,
     regex: String,
     auth: SftpAuth,
-    event_broadcast: mpsc::Sender<SftpReceiverEventSignal>,
-    event_receiver: Option<mpsc::Receiver<SftpReceiverEventSignal>>,
+    event_handler: EventHandler<SftpReceiverEventSignal>,
     event_join_set: JoinSet<()>,
 }
 
 impl SftpReceiver {
     pub fn new<T: AsRef<str>>(host: T, user: T) -> Self {
-        let (event_broadcast, event_receiver) = mpsc::channel(128);
         SftpReceiver { 
             host: host.as_ref().to_string(),
             remote_path: PathBuf::new(),
             delete_after: false,
             regex: String::from(r"^.+\.[^./\\]+$"),
             auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
-            event_broadcast,
-            event_receiver: Some(event_receiver),
+            event_handler: EventHandler::new(),
             event_join_set: JoinSet::new(),
         }
     }
@@ -48,26 +45,7 @@ impl SftpReceiver {
         T: Fn(SftpReceiverEventSignal) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let mut receiver = self.event_receiver.unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver.");
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver.");
-        
-        self.event_join_set.spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = sigterm.recv() => break,
-                    _ = sigint.recv() => break,
-                    event = receiver.recv() => {
-                        match event {
-                            Some(event) => handler(event).await,
-                            None => break,
-                        }
-                    }
-                }
-            }
-        });
-
-        self.event_receiver = None;
+        self.event_join_set = self.event_handler.init(handler);
         self
     }
 
@@ -110,7 +88,7 @@ impl SftpReceiver {
     /// Download files from the sftp server to the target local path.
     /// 
     /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
-    pub async fn receive_files_to_path<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
+    pub async fn receive_once<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
         let local_path = target_local_path.as_ref();
         if !local_path.try_exists()? {
             return Err(Error::tokio_io(format!("The path '{:?}' does not exist!", &local_path)));
@@ -131,6 +109,7 @@ impl SftpReceiver {
         let sftp = session.sftp().await?;
         let entries = sftp.readdir(remote_path).await?;
         let regex = Regex::new(&self.regex).unwrap();
+        let event_broadcast = self.event_handler.broadcast();
 
         for (entry, metadata) in entries {
             if metadata.is_dir() {
@@ -146,22 +125,22 @@ impl SftpReceiver {
                 let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
 
                 let uuid = Uuid::new_v4().to_string();
-                self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
+                event_broadcast.send(SftpReceiverEventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
 
                 match Self::download_file(remote_file, local_file).await {
                     Ok(_) => {
-                        self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
+                        event_broadcast.send(SftpReceiverEventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
 
                         if self.delete_after {
                             sftp.unlink(&remote_file_path).await?;
                         }
                     },
-                    Err(_) => self.event_broadcast.send(SftpReceiverEventSignal::OnDownloadFailed(uuid.clone(), local_file_path.clone())).await.unwrap(),
+                    Err(err) => event_broadcast.send(SftpReceiverEventSignal::OnError(uuid.clone(), err.to_string())).await.unwrap(),
                 }
             }
         }
 
-        drop(self.event_broadcast);
+        drop(event_broadcast);
         while let Some(_) = self.event_join_set.join_next().await {}
 
         Ok(())

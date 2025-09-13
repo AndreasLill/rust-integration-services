@@ -15,14 +15,14 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.2.5", features = ["full"] }
+rust-integration-services = { version = "0.2.6", features = ["full"] }
 ```
 
 **With select features**
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.2.5", features = ["file", "schedule", "sftp", "http"] }
+rust-integration-services = { version = "0.2.6", features = ["file", "schedule", "sftp", "http"] }
 ```
 
 ## Features
@@ -32,7 +32,7 @@ rust-integration-services = { version = "0.2.5", features = ["file", "schedule",
 Poll the directory `./io/in/` and receive a callback with the path of a matching file using regular expression.
 
 ``` rust
-let result = FileReceiver::new("./io/in/")
+FileReceiver::new("./io/in/")
 .filter(".*", async move |_uuid, path| {
     println!("Callback: {:?}", path);
 })
@@ -68,7 +68,7 @@ let result = FileSender::new("./io/out/file.txt")
 
 Run a task once every hour and receive an event when it triggers.
 ``` rust
-let result = ScheduleReceiver::new()
+ScheduleReceiver::new()
 .interval(ScheduleInterval::Hours(1))
 .on_event(async move |event| {
     match event {
@@ -81,7 +81,7 @@ let result = ScheduleReceiver::new()
 
 Run a task once every day at 03:00 UTC and receive an event when it triggers.
 ``` rust
-let result = ScheduleReceiver::new()
+ScheduleReceiver::new()
 .start_time(03, 00, 00)
 .interval(ScheduleInterval::Days(1))
 .on_event(async move |event| {
@@ -190,10 +190,10 @@ let result = SftpReceiver::new("127.0.0.1:22", "user")
     match event {
         SftpReceiverEventSignal::OnDownloadStart(_uuid, path) => println!("Download started: {:?}", path),
         SftpReceiverEventSignal::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
-        SftpReceiverEventSignal::OnDownloadFailed(_uuid, path) => println!("Download failed: {:?}", path),
+        SftpReceiverEventSignal::OnError(_uuid, err) => println!("Download failed: {}", err),
     }
 })
-.receive_files_to_path("/home/user/files")
+.receive_once("/home/user/files")
 .await;
 ```
 
