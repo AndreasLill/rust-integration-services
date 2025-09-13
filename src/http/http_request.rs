@@ -7,6 +7,7 @@ pub struct HttpRequest {
     pub method: HttpMethod,
     pub path: String,
     pub headers: HashMap<String, String>,
+    pub params: HashMap<String, String>,
     pub body: Vec<u8>,
 }
 
@@ -16,6 +17,7 @@ impl HttpRequest {
             method: HttpMethod::Get,
             path: String::from("/"),
             headers: HashMap::new(),
+            params: HashMap::new(),
             body: Vec::new(),
         }
     }

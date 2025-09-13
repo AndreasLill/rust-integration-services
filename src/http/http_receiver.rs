@@ -86,11 +86,12 @@ impl HttpReceiver {
     }
 
     async fn incoming_request(req: Request<Incoming>, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<Sender<HttpReceiverEventSignal>>) -> Result<Response<Full<Bytes>>, Infallible> {
-        let request = Self::build_http_request(req).await;
-        event_broadcast.send(HttpReceiverEventSignal::OnRequest(uuid.clone(), request.clone())).await.unwrap();
+        let mut request = Self::build_http_request(req).await;
 
         match router.at(&request.path) {
             Ok(matched) => {
+                request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+                event_broadcast.send(HttpReceiverEventSignal::OnRequest(uuid.clone(), request.clone())).await.unwrap();
                 let callback = matched.value;
                 let response = callback(uuid.clone(), request).await;
                 let res = Self::build_http_response(response.clone()).await;
@@ -98,6 +99,7 @@ impl HttpReceiver {
                 Ok(res)
             },
             Err(_) => {
+                event_broadcast.send(HttpReceiverEventSignal::OnRequest(uuid.clone(), request.clone())).await.unwrap();
                 let response = HttpResponse::not_found();
                 let res = Self::build_http_response(response.clone()).await;
                 event_broadcast.send(HttpReceiverEventSignal::OnResponse(uuid, response)).await.unwrap();

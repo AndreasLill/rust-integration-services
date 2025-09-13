@@ -15,14 +15,14 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = "0.2.7"
+rust-integration-services = "0.2.8"
 ```
 
 **With select features**
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.2.7", features = ["file", "schedule", "sftp", "http"], default-features = false }
+rust-integration-services = { version = "0.2.8", features = ["file", "schedule", "sftp", "http"], default-features = false }
 ```
 
 ## Features
@@ -129,11 +129,23 @@ HttpReceiver::new("127.0.0.1:8080")
 .await;
 ```
 
-Run a HTTP receiver listening on `127.0.0.1:8080` that handles requests with a dynamic route `/user/{id}` where `{id}` is a path parameter.
+Run a HTTP receiver listening on `127.0.0.1:8080` that handles requests on root `/`.
 ``` rust
 HttpReceiver::new("127.0.0.1:8080")
-.route("/user/{id}", async move |_uuid, _request| {
+.route("/", async move |_uuid, _request| {
     HttpResponse::ok()
+})
+.receive()
+.await;
+```
+
+Run a HTTP receiver listening on `127.0.0.1:8080` that handles requests with a dynamic route `/user/{name}` where `{name}` is a path parameter.
+``` rust
+HttpReceiver::new("127.0.0.1:8080")
+.route("/user/{name}", async move |_uuid, _request| {
+    let name = request.params.get("name").unwrap();
+    let text = format!("Hello {}", name);
+    HttpResponse::ok().body(text.as_bytes())
 })
 .receive()
 .await;

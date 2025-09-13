@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "rust-integration-services"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "async-ssh2-lite",
  "chrono",
