@@ -177,7 +177,7 @@ impl HttpReceiver {
             Self::incoming_request(req, uuid_clone.to_owned(), router.clone(), event_broadcast_clone.to_owned())
         });
         
-        if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
+        if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
             event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, err.to_string())).await.unwrap();
         }
     }
@@ -207,7 +207,7 @@ impl HttpReceiver {
                 }
             }
             _ => {
-                if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
+                if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
                     event_broadcast.send(HttpReceiverEventSignal::OnConnectionFailed(uuid, err.to_string())).await.unwrap();
                 }
             }

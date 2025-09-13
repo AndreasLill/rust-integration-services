@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
