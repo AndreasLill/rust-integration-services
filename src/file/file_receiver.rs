@@ -10,11 +10,12 @@ type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = (
 #[derive(Clone)]
 pub enum FileReceiverEventSignal {
     OnFileReceived(String, PathBuf),
+    OnFileProcessed(String, PathBuf),
 }
 
 pub struct FileReceiver {
     source_path: PathBuf,
-    filter: HashMap<String, FileCallback>,
+    routes: HashMap<String, FileCallback>,
     event_handler: EventHandler<FileReceiverEventSignal>,
     event_join_set: JoinSet<()>,
 }
@@ -23,21 +24,21 @@ impl FileReceiver {
     pub fn new<T: AsRef<Path>>(source_path: T) -> Self {
         FileReceiver {
             source_path: source_path.as_ref().to_path_buf(),
-            filter: HashMap::new(),
+            routes: HashMap::new(),
             event_handler: EventHandler::new(),
             event_join_set: JoinSet::new(),
         }
     }
 
-    /// Callback that returns all file paths from the filter using regular expression.
-    pub fn filter<T, Fut, S>(mut self, filter: S, callback: T) -> Self 
+    /// Callback that returns all file paths from the route using regular expression.
+    pub fn route<T, Fut, S>(mut self, filter: S, callback: T) -> Self 
     where
         T: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
         S: AsRef<str>,
     {
-        Regex::new(filter.as_ref()).expect("Invalid Regex!");
-        self.filter.insert(filter.as_ref().to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
+        Regex::new(filter.as_ref()).expect("Invalid Regex");
+        self.routes.insert(filter.as_ref().to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
         self
     }
 
@@ -56,7 +57,7 @@ impl FileReceiver {
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
         let lock_list = Arc::new(Mutex::new(HashSet::<String>::new()));
-        let filter_map = Arc::new(self.filter.clone());
+        let route_map = Arc::new(self.routes.clone());
         let mut size_map = HashMap::<String, u64>::new();
         
         loop {
@@ -66,11 +67,11 @@ impl FileReceiver {
                 _ = async {} => {
                     if let Ok(files) = Self::get_files_in_directory(&self.source_path).await {
                         for file_path in &files {
-                            for (filter, callback) in filter_map.iter() {
+                            for (route, callback) in route_map.iter() {
                                 let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
                                 
                                 // Check if the filter regex matches the file.
-                                let regex = Regex::new(filter).unwrap();
+                                let regex = Regex::new(route).unwrap();
                                 if !regex.is_match(&file_name) {
                                     continue;
                                 }
@@ -107,9 +108,10 @@ impl FileReceiver {
                             
                                 event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
                                 receiver_join_set.spawn(async move {
-                                    callback(uuid, file_path.to_path_buf()).await;
+                                    callback(uuid.clone(), file_path.to_path_buf()).await;
                                     let mut unlocked_list = lock_list.lock().await;
                                     unlocked_list.remove(&file_name);
+                                    event_broadcast.send(FileReceiverEventSignal::OnFileProcessed(uuid.clone(), file_path.to_path_buf())).await.unwrap();
                                 });
                             }
                         }
