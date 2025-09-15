@@ -6,7 +6,7 @@ ScheduleReceiver::new()
 .interval(ScheduleInterval::Hours(1))
 .on_event(async move |event| {
     match event {
-        ScheduleReceiverEventSignal::OnTrigger(uuid) => println!("{}", uuid),
+        ScheduleReceiverEvent::OnTrigger(uuid) => println!("{}", uuid),
     }
 })
 .receive()
@@ -20,7 +20,7 @@ ScheduleReceiver::new()
 .interval(ScheduleInterval::Days(1))
 .on_event(async move |event| {
     match event {
-        ScheduleReceiverEventSignal::OnTrigger(uuid) => println!("{}", uuid),
+        ScheduleReceiverEvent::OnTrigger(uuid) => println!("{}", uuid),
     }
 })
 .receive()

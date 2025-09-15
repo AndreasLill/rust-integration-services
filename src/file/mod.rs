@@ -1,4 +1,6 @@
 #[cfg(feature = "file")]
+pub mod file_receiver_event;
+#[cfg(feature = "file")]
 pub mod file_receiver;
 #[cfg(feature = "file")]
 pub mod file_sender;

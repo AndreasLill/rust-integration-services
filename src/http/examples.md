@@ -19,10 +19,10 @@ HttpReceiver::new("127.0.0.1:8080")
 })
 .on_event(async move |event| {
     match event {
-        HttpReceiverEventSignal::OnConnectionOpened(uuid, ip) => println!("Connection[{}] opened: {}", uuid, ip),
-        HttpReceiverEventSignal::OnRequest(uuid, request) => println!("Request[{}]: {:?}", uuid, request),
-        HttpReceiverEventSignal::OnResponse(uuid, response) => println!("Response[{}]: {:?}", uuid, response),
-        HttpReceiverEventSignal::OnError(uuid, err) => println!("Failed[{}]: {}", uuid, err),
+        HttpReceiverEvent::OnConnectionOpened(uuid, ip) => println!("Connection[{}] opened: {}", uuid, ip),
+        HttpReceiverEvent::OnRequest(uuid, request) => println!("Request[{}]: {:?}", uuid, request),
+        HttpReceiverEvent::OnResponse(uuid, response) => println!("Response[{}]: {:?}", uuid, response),
+        HttpReceiverEvent::OnError(uuid, err) => println!("Failed[{}]: {}", uuid, err),
     }
 })
 .receive()

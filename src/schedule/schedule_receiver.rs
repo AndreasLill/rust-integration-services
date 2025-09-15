@@ -4,19 +4,14 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveTime, Utc};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 use uuid::Uuid;
 
-use crate::common::event_handler::EventHandler;
+use crate::{common::event_handler::EventHandler, schedule::schedule_receiver_event::ScheduleReceiverEvent};
 
 use super::schedule_interval::ScheduleInterval;
-
-#[derive(Clone)]
-pub enum ScheduleReceiverEventSignal {
-    OnTrigger(String),
-}
 
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
     next_run: DateTime<Utc>,
-    event_handler: EventHandler<ScheduleReceiverEventSignal>,
+    event_handler: EventHandler<ScheduleReceiverEvent>,
     event_join_set: JoinSet<()>,
 }
 
@@ -64,7 +59,7 @@ impl ScheduleReceiver {
 
     pub fn on_event<T, Fut>(mut self, handler: T) -> Self
     where
-        T: Fn(ScheduleReceiverEventSignal) -> Fut + Send + Sync + 'static,
+        T: Fn(ScheduleReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.event_join_set = self.event_handler.init(handler);
@@ -91,7 +86,7 @@ impl ScheduleReceiver {
                 }
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(ScheduleReceiverEventSignal::OnTrigger(uuid.to_string())).await.unwrap();
+                event_broadcast.send(ScheduleReceiverEvent::OnTrigger(uuid.to_string())).await.unwrap();
 
                 if self.interval == ScheduleInterval::None {
                     break;

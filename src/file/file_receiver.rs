@@ -3,20 +3,14 @@ use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::Mutex, task::JoinSet};
 use uuid::Uuid;
 
-use crate::common::event_handler::EventHandler;
+use crate::{common::event_handler::EventHandler, file::file_receiver_event::FileReceiverEvent};
 
 type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-
-#[derive(Clone)]
-pub enum FileReceiverEventSignal {
-    OnFileReceived(String, PathBuf),
-    OnFileProcessed(String, PathBuf),
-}
 
 pub struct FileReceiver {
     source_path: PathBuf,
     routes: HashMap<String, FileCallback>,
-    event_handler: EventHandler<FileReceiverEventSignal>,
+    event_handler: EventHandler<FileReceiverEvent>,
     event_join_set: JoinSet<()>,
 }
 
@@ -44,7 +38,7 @@ impl FileReceiver {
 
     pub fn on_event<T, Fut>(mut self, handler: T) -> Self
     where
-        T: Fn(FileReceiverEventSignal) -> Fut + Send + Sync + 'static,
+        T: Fn(FileReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.event_join_set = self.event_handler.init(handler);
@@ -106,12 +100,20 @@ impl FileReceiver {
                                 let uuid = Uuid::new_v4().to_string();
                                 let event_broadcast = Arc::new(self.event_handler.broadcast());
                             
-                                event_broadcast.send(FileReceiverEventSignal::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
+                                event_broadcast.send(FileReceiverEvent::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
                                 receiver_join_set.spawn(async move {
-                                    callback(uuid.clone(), file_path.to_path_buf()).await;
+                                    let callback_handle = tokio::spawn(callback(uuid.clone(), file_path.to_path_buf())).await;
+                                    match callback_handle {
+                                        Ok(_) => {
+                                            event_broadcast.send(FileReceiverEvent::OnFileProcessed(uuid, file_path.to_path_buf())).await.unwrap();
+                                        },
+                                        Err(err) => {
+                                            event_broadcast.send(FileReceiverEvent::OnError(uuid, err.to_string())).await.unwrap();
+                                        },
+                                    }
+
                                     let mut unlocked_list = lock_list.lock().await;
                                     unlocked_list.remove(&file_name);
-                                    event_broadcast.send(FileReceiverEventSignal::OnFileProcessed(uuid.clone(), file_path.to_path_buf())).await.unwrap();
                                 });
                             }
                         }

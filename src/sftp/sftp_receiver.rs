@@ -8,14 +8,7 @@ use tokio::net::TcpStream;
 use uuid::Uuid;
 
 use super::sftp_auth::SftpAuth;
-use crate::{common::event_handler::EventHandler, utils::error::Error};
-
-#[derive(Clone)]
-pub enum SftpReceiverEventSignal {
-    OnDownloadStart(String, PathBuf),
-    OnDownloadSuccess(String, PathBuf),
-    OnError(String, String),
-}
+use crate::{common::event_handler::EventHandler, sftp::sftp_receiver_event::SftpReceiverEvent, utils::error::Error};
 
 pub struct SftpReceiver {
     host: String,
@@ -23,7 +16,7 @@ pub struct SftpReceiver {
     delete_after: bool,
     regex: String,
     auth: SftpAuth,
-    event_handler: EventHandler<SftpReceiverEventSignal>,
+    event_handler: EventHandler<SftpReceiverEvent>,
     event_join_set: JoinSet<()>,
 }
 
@@ -42,7 +35,7 @@ impl SftpReceiver {
 
     pub fn on_event<T, Fut>(mut self, handler: T) -> Self
     where
-        T: Fn(SftpReceiverEventSignal) -> Fut + Send + Sync + 'static,
+        T: Fn(SftpReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.event_join_set = self.event_handler.init(handler);
@@ -125,17 +118,17 @@ impl SftpReceiver {
                 let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(SftpReceiverEventSignal::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
+                event_broadcast.send(SftpReceiverEvent::OnDownloadStart(uuid.clone(), local_file_path.clone())).await.unwrap();
 
                 match Self::download_file(remote_file, local_file).await {
                     Ok(_) => {
-                        event_broadcast.send(SftpReceiverEventSignal::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
+                        event_broadcast.send(SftpReceiverEvent::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).await.unwrap();
 
                         if self.delete_after {
                             sftp.unlink(&remote_file_path).await?;
                         }
                     },
-                    Err(err) => event_broadcast.send(SftpReceiverEventSignal::OnError(uuid.clone(), err.to_string())).await.unwrap(),
+                    Err(err) => event_broadcast.send(SftpReceiverEvent::OnError(uuid.clone(), err.to_string())).await.unwrap(),
                 }
             }
         }

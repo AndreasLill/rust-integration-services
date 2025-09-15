@@ -85,8 +85,7 @@ impl HttpReceiver {
                 request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
                 event_broadcast.send(HttpReceiverEvent::OnRequest(uuid.clone(), request.clone())).await.unwrap();
                 let callback = matched.value;
-                let callback_future = callback(uuid.clone(), request);
-                let callback_handle = tokio::spawn(callback_future).await;
+                let callback_handle = tokio::spawn(callback(uuid.clone(), request)).await;
                 let response = match callback_handle {
                     Ok(res) => res,
                     Err(err) => {

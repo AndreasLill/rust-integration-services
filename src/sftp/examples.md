@@ -11,9 +11,9 @@ let result = SftpReceiver::new("127.0.0.1:22", "user")
 .delete_after(true)
 .on_event(async move |event| {
     match event {
-        SftpReceiverEventSignal::OnDownloadStart(_uuid, path) => println!("Download started: {:?}", path),
-        SftpReceiverEventSignal::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
-        SftpReceiverEventSignal::OnError(_uuid, err) => println!("Download failed: {}", err),
+        SftpReceiverEvent::OnDownloadStart(_uuid, path) => println!("Download started: {:?}", path),
+        SftpReceiverEvent::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
+        SftpReceiverEvent::OnError(_uuid, err) => println!("Download failed: {}", err),
     }
 })
 .receive_once("/home/user/files")
