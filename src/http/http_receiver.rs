@@ -83,25 +83,40 @@ impl HttpReceiver {
         match router.at(&request.path) {
             Ok(matched) => {
                 request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
-                event_broadcast.send(HttpReceiverEvent::OnRequest(uuid.clone(), request.clone())).ok();
+                event_broadcast.send(HttpReceiverEvent::Request {
+                    uuid: uuid.clone(),
+                    request: request.clone()
+                }).ok();
                 let callback = matched.value;
                 let callback_handle = tokio::spawn(callback(uuid.clone(), request)).await;
                 let response = match callback_handle {
                     Ok(res) => res,
                     Err(err) => {
-                        event_broadcast.send(HttpReceiverEvent::OnError(uuid.clone(), err.to_string())).ok();
+                        event_broadcast.send(HttpReceiverEvent::Error {
+                            uuid: uuid.clone(),
+                            error: err.to_string()
+                        }).ok();
                         HttpResponse::internal_server_error()
                     }
                 };
                 let res = Self::build_http_response(response.clone()).await;
-                event_broadcast.send(HttpReceiverEvent::OnResponse(uuid, response)).ok();
+                event_broadcast.send(HttpReceiverEvent::Response {
+                    uuid: uuid,
+                    response: response
+                }).ok();
                 Ok(res)
             },
             Err(_) => {
-                event_broadcast.send(HttpReceiverEvent::OnRequest(uuid.clone(), request.clone())).ok();
+                event_broadcast.send(HttpReceiverEvent::Request {
+                    uuid: uuid.clone(),
+                    request: request.clone()
+                }).ok();
                 let response = HttpResponse::not_found();
                 let res = Self::build_http_response(response.clone()).await;
-                event_broadcast.send(HttpReceiverEvent::OnResponse(uuid, response)).ok();
+                event_broadcast.send(HttpReceiverEvent::Response {
+                    uuid: uuid,
+                    response: response
+                }).ok();
                 Ok(res)
             },
         }
@@ -131,7 +146,10 @@ impl HttpReceiver {
                     let router = Arc::new(self.router.clone());
                     let event_broadcast = Arc::new(self.event_handler.broadcast());
 
-                    event_broadcast.send(HttpReceiverEvent::OnConnection(uuid.clone(), client_addr.ip().to_string())).ok();
+                    event_broadcast.send(HttpReceiverEvent::Connection {
+                        uuid: uuid.clone(),
+                        ip: client_addr.ip().to_string()
+                    }).ok();
                     match tls_acceptor {
                         Some(acceptor) => {
                             receiver_join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, router, event_broadcast));
@@ -160,7 +178,10 @@ impl HttpReceiver {
         
         let io = TokioIo::new(tcp_stream);
         if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-            event_broadcast.send(HttpReceiverEvent::OnError(uuid, err.to_string())).ok();
+            event_broadcast.send(HttpReceiverEvent::Error {
+                uuid: uuid,
+                error: err.to_string()
+            }).ok();
         }
     }
 
@@ -168,7 +189,10 @@ impl HttpReceiver {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
-                event_broadcast.send(HttpReceiverEvent::OnError(uuid, format!("TLS handshake failed: {:?}", err))).ok();
+                event_broadcast.send(HttpReceiverEvent::Error {
+                    uuid: uuid,
+                    error: format!("TLS handshake failed: {:?}", err)
+                }).ok();
                 return;
             },
         };
@@ -187,12 +211,18 @@ impl HttpReceiver {
         match protocol.as_deref() {
             Some(b"h2") => {
                 if let Err(err) = hyper::server::conn::http2::Builder::new(HttpExecutor).serve_connection(io, service).await {
-                    event_broadcast.send(HttpReceiverEvent::OnError(uuid, format!("Connection failed: {:?}", err))).ok();
+                    event_broadcast.send(HttpReceiverEvent::Error {
+                        uuid: uuid,
+                        error: format!("TLS handshake failed: {:?}", err)
+                    }).ok();
                 }
             }
             _ => {
                 if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-                    event_broadcast.send(HttpReceiverEvent::OnError(uuid, err.to_string())).ok();
+                    event_broadcast.send(HttpReceiverEvent::Error {
+                        uuid: uuid,
+                        error: err.to_string()
+                    }).ok();
                 }
             }
         }

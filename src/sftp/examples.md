@@ -1,7 +1,6 @@
 # SftpReceiver
 
 Download all files from `127.0.0.1:22` user remote directory `upload` and delete files after successful download.  
-Using `on_event` callback to print on download start and success.  
 That way files can be processed asyncronously without blocking other downloads.
 
 ``` rust
@@ -9,13 +8,6 @@ let result = SftpReceiver::new("127.0.0.1:22", "user")
 .auth_password("pass")
 .remote_dir("upload")
 .delete_after(true)
-.on_event(async move |event| {
-    match event {
-        SftpReceiverEvent::OnDownloadStart(_uuid, path) => println!("Download started: {:?}", path),
-        SftpReceiverEvent::OnDownloadSuccess(_uuid, path) => println!("Download complete: {:?}", path),
-        SftpReceiverEvent::OnError(_uuid, err) => println!("Download failed: {}", err),
-    }
-})
 .receive_once("/home/user/files")
 .await;
 ```

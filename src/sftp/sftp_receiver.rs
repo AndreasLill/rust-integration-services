@@ -118,17 +118,26 @@ impl SftpReceiver {
                 let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(SftpReceiverEvent::OnDownloadStart(uuid.clone(), local_file_path.clone())).ok();
+                event_broadcast.send(SftpReceiverEvent::DownloadStarted {
+                    uuid: uuid.clone(),
+                    path: local_file_path.clone()
+                }).ok();
 
                 match Self::download_file(remote_file, local_file).await {
                     Ok(_) => {
-                        event_broadcast.send(SftpReceiverEvent::OnDownloadSuccess(uuid.clone(), local_file_path.clone())).ok();
+                        event_broadcast.send(SftpReceiverEvent::DownloadSuccess {
+                            uuid: uuid.clone(),
+                            path: local_file_path.clone()
+                        }).ok();
                         if self.delete_after {
                             sftp.unlink(&remote_file_path).await?;
                         }
                     },
                     Err(err) => {
-                        event_broadcast.send(SftpReceiverEvent::OnError(uuid.clone(), err.to_string())).ok();
+                        event_broadcast.send(SftpReceiverEvent::Error {
+                            uuid: uuid,
+                            error: err.to_string()
+                        }).ok();
                     },
                 }
             }

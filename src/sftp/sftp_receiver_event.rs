@@ -2,7 +2,16 @@ use std::path::PathBuf;
 
 #[derive(Clone)]
 pub enum SftpReceiverEvent {
-    OnDownloadStart(String, PathBuf),
-    OnDownloadSuccess(String, PathBuf),
-    OnError(String, String),
+    DownloadStarted {
+        uuid: String,
+        path: PathBuf
+    },
+    DownloadSuccess {
+        uuid: String,
+        path: PathBuf
+    },
+    Error {
+        uuid: String,
+        error: String
+    },
 }

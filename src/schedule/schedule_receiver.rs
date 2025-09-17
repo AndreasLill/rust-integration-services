@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveTime, Utc};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
@@ -8,11 +8,14 @@ use crate::{common::event_handler::EventHandler, schedule::schedule_receiver_eve
 
 use super::schedule_interval::ScheduleInterval;
 
+type TriggerCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
     next_run: DateTime<Utc>,
     event_handler: EventHandler<ScheduleReceiverEvent>,
     event_join_set: JoinSet<()>,
+    callback_trigger: TriggerCallback,
 }
 
 impl ScheduleReceiver {
@@ -22,6 +25,7 @@ impl ScheduleReceiver {
             next_run: Utc::now(),
             event_handler: EventHandler::new(),
             event_join_set: JoinSet::new(),
+            callback_trigger: Arc::new(|_| Box::pin(async {})),
         }
     }
     
@@ -66,6 +70,15 @@ impl ScheduleReceiver {
         self
     }
 
+    pub fn trigger<T, Fut>(mut self, callback: T) -> Self
+    where
+        T: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.callback_trigger = Arc::new(move |uuid| Box::pin(callback(uuid)));
+        self
+    }
+
     pub async fn receive(mut self) {
         let mut receiver_join_set = JoinSet::new();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
@@ -84,14 +97,24 @@ impl ScheduleReceiver {
                 if let Ok(duration) = (self.next_run - now).to_std() {
                     sleep(duration).await;
                 }
+                
+                if self.interval != ScheduleInterval::None {
+                    self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
+                }
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(ScheduleReceiverEvent::OnTrigger(uuid.to_string())).ok();
+                event_broadcast.send(ScheduleReceiverEvent::Trigger{uuid: uuid.clone()}).ok();
+                let callback_handle = tokio::spawn((self.callback_trigger)(uuid.clone())).await;
+                if let Err(err) = callback_handle {
+                    event_broadcast.send(ScheduleReceiverEvent::Error {
+                        uuid: uuid.clone(),
+                        error: err.to_string()
+                    }).ok();
+                }
+                
                 if self.interval == ScheduleInterval::None {
                     break;
                 }
-
-                self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
             }
         });
 

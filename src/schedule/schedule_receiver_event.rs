@@ -1,4 +1,10 @@
 #[derive(Clone)]
 pub enum ScheduleReceiverEvent {
-    OnTrigger(String),
+    Trigger {
+        uuid: String
+    },
+    Error {
+        uuid: String,
+        error: String
+    },
 }

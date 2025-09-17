@@ -10,20 +10,12 @@ HttpReceiver::new("127.0.0.1:8080")
 .await;
 ```
 
-Run a HTTP receiver with TLS listening on `127.0.0.1:8080` that handles requests on the root path and log events.
+Run a HTTP receiver with TLS listening on `127.0.0.1:8080` that handles requests on the root path.
 ``` rust
 HttpReceiver::new("127.0.0.1:8080")
 .tls("/home/user/cert.pem", "/home/user/key.pem")
 .route("/", async move |_uuid, _request| {
     HttpResponse::ok()
-})
-.on_event(async move |event| {
-    match event {
-        HttpReceiverEvent::OnConnectionOpened(uuid, ip) => println!("Connection[{}] opened: {}", uuid, ip),
-        HttpReceiverEvent::OnRequest(uuid, request) => println!("Request[{}]: {:?}", uuid, request),
-        HttpReceiverEvent::OnResponse(uuid, response) => println!("Response[{}]: {:?}", uuid, response),
-        HttpReceiverEvent::OnError(uuid, err) => println!("Failed[{}]: {}", uuid, err),
-    }
 })
 .receive()
 .await;
@@ -56,16 +48,16 @@ HttpSender will automatically use a secure TLS connection if the scheme is `http
 
 Send a GET request to `http://127.0.0.1:8080`.
 ``` rust
-let response = HttpSender::new()
-.send("http://127.0.0.1:8080", HttpRequest::get())
+let response = HttpSender::new("http://127.0.0.1:8080")
+.send(HttpRequest::get())
 .await
 .unwrap();
 ```
 
 Send a GET request using TLS to `https://127.0.0.1:8080`.
 ``` rust
-let response = HttpSender::new()
-.send("https://127.0.0.1:8080", HttpRequest::get())
+let response = HttpSender::new("https://127.0.0.1:8080")
+.send(HttpRequest::get())
 .await
 .unwrap();
 ```
@@ -73,9 +65,9 @@ let response = HttpSender::new()
 Send a GET request using TLS and add a custom Root CA to `https://127.0.0.1:8080`.
 ``` rust
 let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
-let response = HttpSender::new()
+let response = HttpSender::new("https://127.0.0.1:8080")
 .add_root_ca(root_ca_path)
-.send("https://127.0.0.1:8080", HttpRequest::get())
+.send(HttpRequest::get())
 .await
 .unwrap();
 ```

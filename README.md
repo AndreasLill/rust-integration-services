@@ -15,14 +15,14 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = "0.3.0"
+rust-integration-services = "0.3.1"
 ```
 
 **With select features**
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.3.0", default-features = false, features = ["file", "schedule", "sftp", "http"] }
+rust-integration-services = { version = "0.3.1", default-features = false, features = ["file", "schedule", "sftp", "http"] }
 ```
 
 ## Features
