@@ -1,20 +1,20 @@
 use tokio::{signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet};
 
 pub struct EventHandler<Event> {
-    broadcast: mpsc::Sender<Event>,
-    receiver: Option<mpsc::Receiver<Event>>,
+    broadcast: mpsc::UnboundedSender<Event>,
+    receiver: Option<mpsc::UnboundedReceiver<Event>>,
 }
 
 impl<Event: Send + 'static> EventHandler<Event> {
     pub fn new() -> Self {
-        let (event_broadcast, event_receiver) = mpsc::channel(128);
+        let (event_broadcast, event_receiver) = mpsc::unbounded_channel();
         EventHandler {
             broadcast: event_broadcast,
             receiver: Some(event_receiver),
         }
     }
 
-    pub fn broadcast(&self) -> mpsc::Sender<Event> {
+    pub fn broadcast(&self) -> mpsc::UnboundedSender<Event> {
         self.broadcast.clone()
     }
 

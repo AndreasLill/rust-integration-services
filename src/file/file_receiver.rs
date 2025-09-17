@@ -100,15 +100,15 @@ impl FileReceiver {
                                 let uuid = Uuid::new_v4().to_string();
                                 let event_broadcast = Arc::new(self.event_handler.broadcast());
                             
-                                event_broadcast.send(FileReceiverEvent::OnFileReceived(uuid.clone(), file_path.to_path_buf())).await.unwrap();
+                                event_broadcast.send(FileReceiverEvent::OnFileReceived(uuid.clone(), file_path.to_path_buf())).ok();
                                 receiver_join_set.spawn(async move {
                                     let callback_handle = tokio::spawn(callback(uuid.clone(), file_path.to_path_buf())).await;
                                     match callback_handle {
                                         Ok(_) => {
-                                            event_broadcast.send(FileReceiverEvent::OnFileProcessed(uuid, file_path.to_path_buf())).await.unwrap();
+                                            event_broadcast.send(FileReceiverEvent::OnFileProcessed(uuid, file_path.to_path_buf())).ok();
                                         },
                                         Err(err) => {
-                                            event_broadcast.send(FileReceiverEvent::OnError(uuid, err.to_string())).await.unwrap();
+                                            event_broadcast.send(FileReceiverEvent::OnError(uuid, err.to_string())).ok();
                                         },
                                     }
 

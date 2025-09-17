@@ -86,8 +86,7 @@ impl ScheduleReceiver {
                 }
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(ScheduleReceiverEvent::OnTrigger(uuid.to_string())).await.unwrap();
-
+                event_broadcast.send(ScheduleReceiverEvent::OnTrigger(uuid.to_string())).ok();
                 if self.interval == ScheduleInterval::None {
                     break;
                 }
