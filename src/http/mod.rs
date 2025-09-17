@@ -36,7 +36,7 @@ mod test {
         });
 
         tokio::time::advance(Duration::from_millis(1000)).await;
-        let result = HttpSender::new().send("http://127.0.0.1:8080", HttpRequest::get()).await;
+        let result = HttpSender::new("http://127.0.0.1:8080").send(HttpRequest::get()).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status.code(), 200);
@@ -66,8 +66,8 @@ mod test {
 
         tokio::time::advance(Duration::from_millis(1000)).await;
         let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
-        let client = HttpSender::new().add_root_ca(root_ca_path);
-        let result = client.send("https://127.0.0.1:8080", HttpRequest::get()).await;
+        let client = HttpSender::new("https://127.0.0.1:8080").add_root_ca(root_ca_path);
+        let result = client.send(HttpRequest::get()).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status.code(), 200);
@@ -75,13 +75,13 @@ mod test {
 
     #[tokio::test]
     async fn http_sender() {
-        let result = HttpSender::new().send("http://httpbin.org/get", HttpRequest::get()).await;
+        let result = HttpSender::new("http://httpbin.org/get").send(HttpRequest::get()).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn http_sender_tls() {
-        let result = HttpSender::new().send("https://httpbin.org/get", HttpRequest::get()).await;
+        let result = HttpSender::new("https://httpbin.org/get").send(HttpRequest::get()).await;
         assert!(result.is_ok());
     }
 

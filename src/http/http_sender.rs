@@ -11,6 +11,7 @@ use webpki_roots::TLS_SERVER_ROOTS;
 use crate::{http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, utils::{error::Error, result::ResultDyn}};
 
 pub struct HttpSender {
+    url: String,
     root_cert_store: RootCertStore,
     http1_only: bool,
     http2_only: bool,
@@ -23,11 +24,12 @@ impl HttpSender {
     /// [`webpki_roots`](https://docs.rs/webpki-roots) crate to validate server certificates.
     /// 
     /// To add a custom Certificate Authority (CA), use [`add_root_ca()`] before sending the request.
-    pub fn new() -> Self {
+    pub fn new<T: AsRef<str>>(url: T) -> Self {
         let mut root_cert_store = RootCertStore::empty();
         root_cert_store.extend(TLS_SERVER_ROOTS.iter().cloned());
 
         HttpSender {
+            url: url.as_ref().to_string(),
             root_cert_store,
             http1_only: false,
             http2_only: false,
@@ -61,8 +63,8 @@ impl HttpSender {
     /// If the URL scheme is `"http"`, HTTP/1.1 will be used for the request.
     /// 
     /// If the URL scheme is `"https"`, a secure TLS connection is established and ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
-    pub async fn send<T: AsRef<str>>(&self, url: T, request: HttpRequest) -> ResultDyn<HttpResponse> {
-        let url = url.as_ref().parse::<Uri>()?;
+    pub async fn send(&self, request: HttpRequest) -> ResultDyn<HttpResponse> {
+        let url = self.url.parse::<Uri>()?;
         let scheme = url.scheme_str().ok_or("URL is missing a scheme.")?;
 
         if self.http1_only && self.http2_only {
