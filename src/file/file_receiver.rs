@@ -11,7 +11,6 @@ pub struct FileReceiver {
     source_path: PathBuf,
     routes: HashMap<String, FileCallback>,
     event_handler: EventHandler<FileReceiverEvent>,
-    event_join_set: JoinSet<()>,
 }
 
 impl FileReceiver {
@@ -20,7 +19,6 @@ impl FileReceiver {
             source_path: source_path.as_ref().to_path_buf(),
             routes: HashMap::new(),
             event_handler: EventHandler::new(),
-            event_join_set: JoinSet::new(),
         }
     }
 
@@ -41,7 +39,7 @@ impl FileReceiver {
         T: Fn(FileReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.event_join_set = self.event_handler.init(handler);
+        self.event_handler.init(handler);
         self
     }
 
@@ -133,8 +131,8 @@ impl FileReceiver {
             }
         }
 
+        self.event_handler.shutdown().await;
         while let Some(_) = receiver_join_set.join_next().await {}
-        while let Some(_) = self.event_join_set.join_next().await {}
     }
 
     async fn get_files_in_directory(path: &Path) -> tokio::io::Result<Vec<PathBuf>> {

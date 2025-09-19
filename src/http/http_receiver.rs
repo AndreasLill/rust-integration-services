@@ -17,7 +17,6 @@ pub struct HttpReceiver {
     host: String,
     router: Router<RouteCallback>,
     event_handler: EventHandler<HttpReceiverEvent>,
-    event_join_set: JoinSet<()>,
     tls_config: Option<ServerConfig>,
 }
 
@@ -28,7 +27,6 @@ impl HttpReceiver {
             host: host.as_ref().to_string(),
             router: Router::new(),
             event_handler: EventHandler::new(),
-            event_join_set: JoinSet::new(),
             tls_config: None,
         }
     }
@@ -73,53 +71,8 @@ impl HttpReceiver {
         T: Fn(HttpReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.event_join_set = self.event_handler.init(handler);
+        self.event_handler.init(handler);
         self
-    }
-
-    async fn incoming_request(req: Request<Incoming>, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) -> Result<Response<Full<Bytes>>, Infallible> {
-        let mut request = Self::build_http_request(req).await;
-
-        match router.at(&request.path) {
-            Ok(matched) => {
-                request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
-                event_broadcast.send(HttpReceiverEvent::Request {
-                    uuid: uuid.clone(),
-                    request: request.clone()
-                }).ok();
-                let callback = matched.value;
-                let callback_handle = tokio::spawn(callback(uuid.clone(), request)).await;
-                let response = match callback_handle {
-                    Ok(res) => res,
-                    Err(err) => {
-                        event_broadcast.send(HttpReceiverEvent::Error {
-                            uuid: uuid.clone(),
-                            error: err.to_string()
-                        }).ok();
-                        HttpResponse::internal_server_error()
-                    }
-                };
-                let res = Self::build_http_response(response.clone()).await;
-                event_broadcast.send(HttpReceiverEvent::Response {
-                    uuid: uuid,
-                    response: response
-                }).ok();
-                Ok(res)
-            },
-            Err(_) => {
-                event_broadcast.send(HttpReceiverEvent::Request {
-                    uuid: uuid.clone(),
-                    request: request.clone()
-                }).ok();
-                let response = HttpResponse::not_found();
-                let res = Self::build_http_response(response.clone()).await;
-                event_broadcast.send(HttpReceiverEvent::Response {
-                    uuid: uuid,
-                    response: response
-                }).ok();
-                Ok(res)
-            },
-        }
     }
 
     /// Starts the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
@@ -162,8 +115,8 @@ impl HttpReceiver {
             }
         }
 
+        self.event_handler.shutdown().await;
         while let Some(_) = receiver_join_set.join_next().await {}
-        while let Some(_) = self.event_join_set.join_next().await {}
     }
 
     async fn tcp_connection(tcp_stream: TcpStream, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) {
@@ -226,7 +179,51 @@ impl HttpReceiver {
                 }
             }
         }
+    }
 
+    async fn incoming_request(req: Request<Incoming>, uuid: String, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) -> Result<Response<Full<Bytes>>, Infallible> {
+        let mut request = Self::build_http_request(req).await;
+
+        match router.at(&request.path) {
+            Ok(matched) => {
+                request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+                event_broadcast.send(HttpReceiverEvent::Request {
+                    uuid: uuid.clone(),
+                    request: request.clone()
+                }).ok();
+                let callback = matched.value;
+                let callback_handle = tokio::spawn(callback(uuid.clone(), request)).await;
+                let response = match callback_handle {
+                    Ok(res) => res,
+                    Err(err) => {
+                        event_broadcast.send(HttpReceiverEvent::Error {
+                            uuid: uuid.clone(),
+                            error: err.to_string()
+                        }).ok();
+                        HttpResponse::internal_server_error()
+                    }
+                };
+                let res = Self::build_http_response(response.clone()).await;
+                event_broadcast.send(HttpReceiverEvent::Response {
+                    uuid: uuid,
+                    response: response
+                }).ok();
+                Ok(res)
+            },
+            Err(_) => {
+                event_broadcast.send(HttpReceiverEvent::Request {
+                    uuid: uuid.clone(),
+                    request: request.clone()
+                }).ok();
+                let response = HttpResponse::not_found();
+                let res = Self::build_http_response(response.clone()).await;
+                event_broadcast.send(HttpReceiverEvent::Response {
+                    uuid: uuid,
+                    response: response
+                }).ok();
+                Ok(res)
+            },
+        }
     }
 
     async fn build_http_request(req: Request<Incoming>) -> HttpRequest {

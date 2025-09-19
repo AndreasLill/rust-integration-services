@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use async_ssh2_lite::{AsyncFile, AsyncSession, SessionConfiguration, TokioTcpStream};
 use futures_util::{AsyncReadExt};
 use regex::Regex;
-use tokio::{fs::{File, OpenOptions}, io::AsyncWriteExt, task::JoinSet};
+use tokio::{fs::{File, OpenOptions}, io::AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
@@ -17,7 +17,6 @@ pub struct SftpReceiver {
     regex: String,
     auth: SftpAuth,
     event_handler: EventHandler<SftpReceiverEvent>,
-    event_join_set: JoinSet<()>,
 }
 
 impl SftpReceiver {
@@ -29,7 +28,6 @@ impl SftpReceiver {
             regex: String::from(r"^.+\.[^./\\]+$"),
             auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
             event_handler: EventHandler::new(),
-            event_join_set: JoinSet::new(),
         }
     }
 
@@ -38,7 +36,7 @@ impl SftpReceiver {
         T: Fn(SftpReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.event_join_set = self.event_handler.init(handler);
+        self.event_handler.init(handler);
         self
     }
 
@@ -143,9 +141,7 @@ impl SftpReceiver {
             }
         }
 
-        drop(event_broadcast);
-        while let Some(_) = self.event_join_set.join_next().await {}
-
+        self.event_handler.shutdown().await;
         Ok(())
     }
 

@@ -14,7 +14,6 @@ pub struct ScheduleReceiver {
     interval: ScheduleInterval,
     next_run: DateTime<Utc>,
     event_handler: EventHandler<ScheduleReceiverEvent>,
-    event_join_set: JoinSet<()>,
     callback_trigger: TriggerCallback,
 }
 
@@ -24,7 +23,6 @@ impl ScheduleReceiver {
             interval: ScheduleInterval::None,
             next_run: Utc::now(),
             event_handler: EventHandler::new(),
-            event_join_set: JoinSet::new(),
             callback_trigger: Arc::new(|_| Box::pin(async {})),
         }
     }
@@ -66,7 +64,7 @@ impl ScheduleReceiver {
         T: Fn(ScheduleReceiverEvent) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.event_join_set = self.event_handler.init(handler);
+        self.event_handler.init(handler);
         self
     }
 
@@ -136,7 +134,7 @@ impl ScheduleReceiver {
             }
         }
 
-        while let Some(_) = self.event_join_set.join_next().await {}
+        self.event_handler.shutdown().await;
     }
 
     async fn calculate_next_run(next_run: DateTime<Utc>, interval: ScheduleInterval) -> DateTime<Utc> {

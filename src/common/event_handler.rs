@@ -1,8 +1,12 @@
-use tokio::{signal::unix::{signal, SignalKind}, sync::mpsc, task::JoinSet};
+use std::sync::Arc;
+
+use tokio::{sync::{mpsc, Notify}, task::JoinSet};
 
 pub struct EventHandler<Event> {
     broadcast: mpsc::UnboundedSender<Event>,
     receiver: Option<mpsc::UnboundedReceiver<Event>>,
+    join_set: JoinSet<()>,
+    shutdown: Arc<Notify>,
 }
 
 impl<Event: Send + 'static> EventHandler<Event> {
@@ -11,11 +15,19 @@ impl<Event: Send + 'static> EventHandler<Event> {
         EventHandler {
             broadcast: event_broadcast,
             receiver: Some(event_receiver),
+            join_set: JoinSet::new(),
+            shutdown: Arc::new(Notify::new())
         }
     }
 
     pub fn broadcast(&self) -> mpsc::UnboundedSender<Event> {
         self.broadcast.clone()
+    }
+
+    /// Gracefully shutdown the event handler and wait for all remaining tasks to finish.
+    pub async fn shutdown(&mut self) {
+        self.shutdown.notify_waiters();
+        while let Some(_) = self.join_set.join_next().await {}
     }
 
     /// Initializes the event handler loop and spawns it in a new `JoinSet`.
@@ -27,21 +39,20 @@ impl<Event: Send + 'static> EventHandler<Event> {
     ///
     /// Returns a `JoinSet<()>` containing the spawned task, which can be awaited
     /// to track completion or perform graceful shutdown.
-    pub fn init<T, Fut>(&mut self, handler: T) -> JoinSet<()>
+    pub fn init<T, Fut>(&mut self, handler: T)
     where
         T: Fn(Event) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let mut receiver = self.receiver.take().expect("Event receiver already taken");
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
+        let shutdown = self.shutdown.clone();
 
-        let mut join_set = JoinSet::new();
-        join_set.spawn(async move {
+        self.join_set.spawn(async move {
             loop {
                 tokio::select! {
-                    _ = sigterm.recv() => break,
-                    _ = sigint.recv() => break,
+                    _ = shutdown.notified() => {
+                        break;
+                    },
                     event = receiver.recv() => {
                         match event {
                             Some(event) => handler(event).await,
@@ -51,7 +62,5 @@ impl<Event: Send + 'static> EventHandler<Event> {
                 }
             }
         });
-
-        join_set
     }
 }
