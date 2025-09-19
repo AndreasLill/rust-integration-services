@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
+
 use crate::http::http_method::HttpMethod;
 
 #[derive(Debug, Clone)]
@@ -8,7 +10,7 @@ pub struct HttpRequest {
     pub path: String,
     pub headers: HashMap<String, String>,
     pub params: HashMap<String, String>,
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 impl HttpRequest {
@@ -18,7 +20,7 @@ impl HttpRequest {
             path: String::from("/"),
             headers: HashMap::new(),
             params: HashMap::new(),
-            body: Vec::new(),
+            body: Bytes::new(),
         }
     }
 
@@ -46,7 +48,7 @@ impl HttpRequest {
 
     /// Sets the HTTP request body.
     pub fn body(mut self, body: &[u8]) -> Self {
-        self.body = body.to_vec();
+        self.body = Bytes::copy_from_slice(body);
         self
     }
 

@@ -102,9 +102,9 @@ mod test {
 
     #[tokio::test]
     async fn http_request() {
-        let request = HttpRequest::get().body(b"test").header("test", "test");
+        let request = HttpRequest::get().body("test".as_bytes()).header("test", "test");
         assert_eq!(request.method.as_str(), "GET");
-        assert_eq!(request.body, b"test");
+        assert_eq!(request.body, "test".as_bytes());
         assert_eq!(request.headers.get("test").unwrap(), "test");
     }
 
@@ -113,7 +113,7 @@ mod test {
         let response = HttpResponse::ok().body(b"test").header("test", "test");
         assert_eq!(response.status.code(), 200);
         assert_eq!(response.status.text(), "OK");
-        assert_eq!(response.body, b"test");
+        assert_eq!(response.body, "test".as_bytes());
         assert_eq!(response.headers.get("test").unwrap(), "test");
     }
 }

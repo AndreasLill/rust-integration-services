@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
+
 use crate::http::http_status::HttpStatus;
 
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
     pub status: HttpStatus,
     pub headers: HashMap<String, String>,
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 impl HttpResponse {
@@ -14,7 +16,7 @@ impl HttpResponse {
         HttpResponse {
             status: HttpStatus::Ok,
             headers: HashMap::new(),
-            body: Vec::new(),
+            body: Bytes::new(),
         }
     }
 
@@ -67,7 +69,7 @@ impl HttpResponse {
 
     /// Sets the HTTP response body and automatically adds a `content-length` header.
     pub fn body(mut self, body: &[u8]) -> Self {
-        self.body = body.to_vec();
+        self.body = Bytes::copy_from_slice(body);
         self.headers.insert(String::from("content-length"), String::from(body.len().to_string()));
         self
     }

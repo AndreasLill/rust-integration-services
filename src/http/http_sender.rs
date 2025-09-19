@@ -214,7 +214,7 @@ impl HttpSender {
             }
         }
         
-        response.body = body.collect().await?.to_bytes().to_vec();
+        response.body = body.collect().await?.to_bytes();
         
         Ok(response)
     }
