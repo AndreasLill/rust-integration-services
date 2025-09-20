@@ -10,7 +10,7 @@ use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, s
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use crate::{common::event_handler::EventHandler, http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_receiver_event::HttpReceiverEvent, http_request::HttpRequest, http_response::HttpResponse}, utils::result::ResultDyn };
+use crate::{common::event_handler::EventHandler, http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_receiver_event::HttpReceiverEvent, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, utils::result::ResultDyn };
 
 type RouteCallback = Arc<dyn Fn(String, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
@@ -96,11 +96,20 @@ impl HttpReceiver {
                 _ = sigterm.recv() => break,
                 _ = sigint.recv() => break,
                 result = listener.accept() => {
-                    let (tcp_stream, client_addr) = result.unwrap();
                     let uuid = Arc::new(Uuid::new_v4().to_string());
                     let tls_acceptor = tls_acceptor.clone();
                     let event_broadcast = event_broadcast.clone();
                     let router = router.clone();
+                    let (tcp_stream, client_addr) = match result {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            event_broadcast.send(HttpReceiverEvent::Error {
+                                uuid: uuid.to_string(),
+                                error: err.to_string()
+                            }).ok();
+                            continue;
+                        },
+                    };
 
                     event_broadcast.send(HttpReceiverEvent::Connection {
                         uuid: uuid.to_string(),
@@ -185,7 +194,16 @@ impl HttpReceiver {
     }
 
     async fn incoming_request(req: Request<Incoming>, uuid: Arc<String>, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) -> Result<Response<Full<Bytes>>, Infallible> {
-        let mut request = Self::build_http_request(req).await;
+        let mut request = match Self::build_http_request(req).await {
+            Ok(req) => req,
+            Err(err) => {
+                event_broadcast.send(HttpReceiverEvent::Error {
+                    uuid: uuid.to_string(),
+                    error: err.to_string(),
+                }).ok();
+                return Ok(Self::hyper_internal_server_error_response())
+            },
+        };
 
         match router.at(&request.path) {
             Ok(matched) => {
@@ -202,17 +220,28 @@ impl HttpReceiver {
                     Err(err) => {
                         event_broadcast.send(HttpReceiverEvent::Error {
                             uuid: uuid.to_string(),
-                            error: format!("Error: {:?}", err),
+                            error: format!("{:?}", err),
                         }).ok();
                         HttpResponse::internal_server_error()
                     }
                 };
-                let res = Self::build_http_response(response.clone()).await;
+
+                let hyper_res = match Self::build_http_response(response.clone()).await {
+                    Ok(res) => res,
+                    Err(err) => {
+                        event_broadcast.send(HttpReceiverEvent::Error {
+                            uuid: uuid.to_string(),
+                            error: err.to_string(),
+                        }).ok();
+                        return Ok(Self::hyper_internal_server_error_response())
+                    },
+                };
+
                 event_broadcast.send(HttpReceiverEvent::Response {
                     uuid: uuid.to_string(),
                     response: response
                 }).ok();
-                Ok(res)
+                Ok(hyper_res)
             },
             Err(_) => {
                 event_broadcast.send(HttpReceiverEvent::Request {
@@ -220,37 +249,51 @@ impl HttpReceiver {
                     request: request.clone()
                 }).ok();
                 let response = HttpResponse::not_found();
-                let res = Self::build_http_response(response.clone()).await;
+                let hyper_res = match Self::build_http_response(response.clone()).await {
+                    Ok(res) => res,
+                    Err(err) => {
+                        event_broadcast.send(HttpReceiverEvent::Error {
+                            uuid: uuid.to_string(),
+                            error: err.to_string(),
+                        }).ok();
+                        return Ok(Self::hyper_internal_server_error_response())
+                    },
+                };
+
                 event_broadcast.send(HttpReceiverEvent::Response {
                     uuid: uuid.to_string(),
                     response: response
                 }).ok();
-                Ok(res)
+                Ok(hyper_res)
             },
         }
     }
 
-    async fn build_http_request(req: Request<Incoming>) -> HttpRequest {
+    async fn build_http_request(req: Request<Incoming>) -> ResultDyn<HttpRequest> {
         let (parts, body) = req.into_parts();
         let mut request = HttpRequest::new();
-        request.method = HttpMethod::from_str(parts.method.as_str()).unwrap();
+        request.method = HttpMethod::from_str(parts.method.as_str())?;
         request.path = parts.uri.path().to_string();
         for (key, value) in parts.headers.iter() {
             if let Ok(value) = value.to_str() {
                 request.headers.insert(key.to_string(), value.to_string());
             }
         }
-        request.body = body.collect().await.unwrap().to_bytes();
-        request
+        request.body = body.collect().await?.to_bytes();
+        Ok(request)
     }
 
-    async fn build_http_response(res: HttpResponse) -> Response<Full<Bytes>> {
-        let mut response: Response<Full<Bytes>> = Response::builder().status(res.status.code()).body(res.body.into()).unwrap();
+    async fn build_http_response(res: HttpResponse) -> ResultDyn<Response<Full<Bytes>>> {
+        let mut response: Response<Full<Bytes>> = Response::builder().status(res.status.code()).body(res.body.into())?;
         for (key, value) in res.headers.iter() {
-            let header_name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-            let header_value = HeaderValue::from_bytes(&value.as_bytes()).unwrap();
+            let header_name = HeaderName::from_bytes(key.as_bytes())?;
+            let header_value = HeaderValue::from_bytes(&value.as_bytes())?;
             response.headers_mut().insert(header_name, header_value);
         }
-        response
+        Ok(response)
+    }
+
+    fn hyper_internal_server_error_response() -> Response<Full<Bytes>> {
+        Response::builder().status(HttpStatus::InternalServerError.code()).body(Full::new(Bytes::new())).unwrap()
     }
 }
