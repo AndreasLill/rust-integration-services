@@ -1,4 +1,5 @@
-use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, panic::AssertUnwindSafe, path::{Path, PathBuf}, pin::Pin, sync::Arc, time::Duration};
+use futures::FutureExt;
 use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::Mutex, task::JoinSet};
 use uuid::Uuid;
@@ -7,14 +8,14 @@ type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = (
 
 pub struct FileReceiver {
     source_path: PathBuf,
-    routes: HashMap<String, FileCallback>,
+    routes: Vec<(Regex, FileCallback)>,
 }
 
 impl FileReceiver {
     pub fn new<T: AsRef<Path>>(source_path: T) -> Self {
         FileReceiver {
             source_path: source_path.as_ref().to_path_buf(),
-            routes: HashMap::new(),
+            routes: Vec::new(),
         }
     }
 
@@ -25,8 +26,11 @@ impl FileReceiver {
         Fut: Future<Output = ()> + Send + 'static,
         S: AsRef<str>,
     {
-        Regex::new(filter.as_ref()).expect("Invalid Regex");
-        self.routes.insert(filter.as_ref().to_string(), Arc::new(move |uuid, path| Box::pin(callback(uuid, path))));
+        if self.routes.iter().any(|(r, _)| r.as_str() == filter.as_ref()) {
+            panic!("Route already exists with filter {}", filter.as_ref())
+        }
+        let regex = Regex::new(filter.as_ref()).expect("Invalid Regex");
+        self.routes.push((regex, Arc::new(move |uuid, path| Box::pin(callback(uuid, path)))));
         self
     }
 
@@ -51,8 +55,7 @@ impl FileReceiver {
                                 let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
                                 
                                 // Check if the filter regex matches the file.
-                                let regex = Regex::new(route).unwrap();
-                                if !regex.is_match(&file_name) {
+                                if !route.is_match(&file_name) {
                                     continue;
                                 }
                                 
@@ -87,11 +90,12 @@ impl FileReceiver {
                             
                                 log::trace!("[{}] file received at {:?}", uuid, file_path);
                                 receiver_join_set.spawn(async move {
-                                    let callback_handle = tokio::spawn(callback(uuid.clone(), file_path.to_path_buf())).await;
-                                    match callback_handle {
+                                    let callback_fut = callback(uuid.to_string(), file_path.to_path_buf());
+                                    let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
+                                    match result {
                                         Ok(_) => log::trace!("[{}] file processed", uuid),
                                         Err(err) => log::error!("[{}] {:?}", uuid, err),
-                                    }
+                                    };
 
                                     let mut unlocked_list = lock_list.lock().await;
                                     unlocked_list.remove(&file_name);

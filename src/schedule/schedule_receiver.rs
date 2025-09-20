@@ -1,6 +1,7 @@
-use std::{pin::Pin, sync::Arc};
+use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveTime, Utc};
+use futures::FutureExt;
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 use uuid::Uuid;
 
@@ -89,8 +90,9 @@ impl ScheduleReceiver {
 
                 let uuid = Uuid::new_v4().to_string();
                 log::trace!("[{}] trigger started", uuid);
-                let callback_handle = tokio::spawn((self.callback_trigger)(uuid.clone())).await;
-                if let Err(err) = callback_handle {
+                let callback_fut = (self.callback_trigger)(uuid.clone());
+                let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
+                if let Err(err) = result {
                     log::trace!("[{}] {:?}", uuid, err);
                 }
                 log::trace!("[{}] trigger completed", uuid);
