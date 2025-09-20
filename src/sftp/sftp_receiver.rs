@@ -14,7 +14,7 @@ pub struct SftpReceiver {
     host: String,
     remote_path: PathBuf,
     delete_after: bool,
-    regex: String,
+    regex: Regex,
     auth: SftpAuth,
 }
 
@@ -24,7 +24,7 @@ impl SftpReceiver {
             host: host.as_ref().to_string(),
             remote_path: PathBuf::new(),
             delete_after: false,
-            regex: String::from(r"^.+\.[^./\\]+$"),
+            regex: Regex::new(r"^.+\.[^./\\]+$").unwrap(),
             auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
         }
     }
@@ -61,7 +61,7 @@ impl SftpReceiver {
     /// 
     /// The default regex is: ^.+\.[^./\\]+$
     pub fn regex<T: AsRef<str>>(mut self, regex: T) -> Self {
-        self.regex = regex.as_ref().to_string();
+        self.regex = Regex::new(regex.as_ref()).expect("Invalid Regex");
         self
     }
 
@@ -90,7 +90,6 @@ impl SftpReceiver {
         let remote_path = Path::new(&self.remote_path);
         let sftp = session.sftp().await?;
         let entries = sftp.readdir(remote_path).await?;
-        let regex = Regex::new(&self.regex).unwrap();
 
         for (entry, metadata) in entries {
             if metadata.is_dir() {
@@ -98,7 +97,7 @@ impl SftpReceiver {
             }
 
             let file_name = entry.file_name().unwrap().to_str().unwrap();
-            if regex.is_match(file_name) {
+            if self.regex.is_match(file_name) {
 
                 let remote_file_path = Path::new(&self.remote_path).join(file_name);
                 let remote_file = sftp.open(&remote_file_path).await?;
