@@ -91,7 +91,7 @@ impl HttpSender {
         let stream = TcpStream::connect((host, port)).await?;
         let io = TokioIo::new(stream);
         
-        let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await?;
         
         tokio::spawn(async move {
             connection.await
@@ -140,7 +140,7 @@ impl HttpSender {
         match version {
             Version::HTTP_2 => {
                 let io = TokioIo::new(tls_stream);
-                let (mut sender, connection) = hyper::client::conn::http2::Builder::new(HttpExecutor).handshake(io).await.unwrap();
+                let (mut sender, connection) = hyper::client::conn::http2::Builder::new(HttpExecutor).handshake(io).await?;
                 
                 tokio::spawn(async move {
                     connection.await
@@ -154,7 +154,7 @@ impl HttpSender {
             }
             Version::HTTP_11 => {
                 let io = TokioIo::new(tls_stream);
-                let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await.unwrap();
+                let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await?;
         
                 tokio::spawn(async move {
                     connection.await
