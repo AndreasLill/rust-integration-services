@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "rust-integration-services"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "async-ssh2-lite",
  "bytes",
@@ -917,6 +917,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
+ "log",
  "matchit",
  "regex",
  "rustls",

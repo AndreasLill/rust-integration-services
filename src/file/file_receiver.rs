@@ -3,14 +3,11 @@ use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::Mutex, task::JoinSet};
 use uuid::Uuid;
 
-use crate::{common::event_handler::EventHandler, file::file_receiver_event::FileReceiverEvent};
-
 type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 pub struct FileReceiver {
     source_path: PathBuf,
     routes: HashMap<String, FileCallback>,
-    event_handler: EventHandler<FileReceiverEvent>,
 }
 
 impl FileReceiver {
@@ -18,7 +15,6 @@ impl FileReceiver {
         FileReceiver {
             source_path: source_path.as_ref().to_path_buf(),
             routes: HashMap::new(),
-            event_handler: EventHandler::new(),
         }
     }
 
@@ -34,16 +30,7 @@ impl FileReceiver {
         self
     }
 
-    pub fn on_event<T, Fut>(mut self, handler: T) -> Self
-    where
-        T: Fn(FileReceiverEvent) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.event_handler.init(handler);
-        self
-    }
-
-    pub async fn receive(mut self) {
+    pub async fn receive(self) {
         let mut receiver_join_set = JoinSet::new();
         let mut interval = tokio::time::interval(Duration::from_millis(1500));
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
@@ -52,6 +39,7 @@ impl FileReceiver {
         let route_map = Arc::new(self.routes.clone());
         let mut size_map = HashMap::<String, u64>::new();
         
+        log::trace!("started on {:?}", self.source_path);
         loop {
             tokio::select! {
                 _ = sigterm.recv() => break,
@@ -96,27 +84,13 @@ impl FileReceiver {
                                 let lock_list = Arc::clone(&lock_list);
                                 let file_path = Arc::new(file_path.to_path_buf());
                                 let uuid = Uuid::new_v4().to_string();
-                                let event_broadcast = Arc::new(self.event_handler.broadcast());
                             
-                                event_broadcast.send(FileReceiverEvent::FileReceived {
-                                    uuid: uuid.clone(),
-                                    path: file_path.to_path_buf()
-                                }).ok();
+                                log::trace!("[{}] file received at {:?}", uuid, file_path);
                                 receiver_join_set.spawn(async move {
                                     let callback_handle = tokio::spawn(callback(uuid.clone(), file_path.to_path_buf())).await;
                                     match callback_handle {
-                                        Ok(_) => {
-                                            event_broadcast.send(FileReceiverEvent::FileProcessed {
-                                                uuid: uuid.clone(),
-                                                path: file_path.to_path_buf()
-                                            }).ok();
-                                        },
-                                        Err(err) => {
-                                            event_broadcast.send(FileReceiverEvent::Error {
-                                                uuid: uuid,
-                                                error: err.to_string()
-                                            }).ok();
-                                        },
+                                        Ok(_) => log::trace!("[{}] file processed", uuid),
+                                        Err(err) => log::error!("[{}] {:?}", uuid, err),
                                     }
 
                                     let mut unlocked_list = lock_list.lock().await;
@@ -131,8 +105,9 @@ impl FileReceiver {
             }
         }
 
-        self.event_handler.shutdown().await;
+        log::trace!("shut down pending...");
         while let Some(_) = receiver_join_set.join_next().await {}
+        log::trace!("shut down complete");
     }
 
     async fn get_files_in_directory(path: &Path) -> tokio::io::Result<Vec<PathBuf>> {

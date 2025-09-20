@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use uuid::Uuid;
 
 use super::sftp_auth::SftpAuth;
-use crate::{common::event_handler::EventHandler, sftp::sftp_receiver_event::SftpReceiverEvent, utils::error::Error};
+use crate::utils::error::Error;
 
 pub struct SftpReceiver {
     host: String,
@@ -16,7 +16,6 @@ pub struct SftpReceiver {
     delete_after: bool,
     regex: String,
     auth: SftpAuth,
-    event_handler: EventHandler<SftpReceiverEvent>,
 }
 
 impl SftpReceiver {
@@ -27,17 +26,7 @@ impl SftpReceiver {
             delete_after: false,
             regex: String::from(r"^.+\.[^./\\]+$"),
             auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
-            event_handler: EventHandler::new(),
         }
-    }
-
-    pub fn on_event<T, Fut>(mut self, handler: T) -> Self
-    where
-        T: Fn(SftpReceiverEvent) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.event_handler.init(handler);
-        self
     }
 
     /// Sets the password for authentication.
@@ -79,15 +68,17 @@ impl SftpReceiver {
     /// Download files from the sftp server to the target local path.
     /// 
     /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
-    pub async fn receive_once<T: AsRef<Path>>(mut self, target_local_path: T) -> tokio::io::Result<()> {
+    pub async fn receive_once<T: AsRef<Path>>(self, target_local_path: T) -> tokio::io::Result<()> {
         let local_path = target_local_path.as_ref();
         if !local_path.try_exists()? {
             return Err(Error::tokio_io(format!("The path '{:?}' does not exist!", &local_path)));
         }
 
+        log::trace!("connecting to {}", self.host);
         let tcp = TokioTcpStream::connect(&self.host).await?;
         let mut session = AsyncSession::new(tcp, SessionConfiguration::default())?;
         session.handshake().await?;
+        log::trace!("connected to {}", self.host);
 
         if let Some(password) = self.auth.password {
             session.userauth_password(&self.auth.user, &password).await?;
@@ -100,7 +91,6 @@ impl SftpReceiver {
         let sftp = session.sftp().await?;
         let entries = sftp.readdir(remote_path).await?;
         let regex = Regex::new(&self.regex).unwrap();
-        let event_broadcast = self.event_handler.broadcast();
 
         for (entry, metadata) in entries {
             if metadata.is_dir() {
@@ -116,32 +106,24 @@ impl SftpReceiver {
                 let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(SftpReceiverEvent::DownloadStarted {
-                    uuid: uuid.clone(),
-                    path: local_file_path.clone()
-                }).ok();
+                log::trace!("[{}] download started to {:?}", uuid, local_file_path);
 
                 match Self::download_file(remote_file, local_file).await {
                     Ok(_) => {
-                        event_broadcast.send(SftpReceiverEvent::DownloadSuccess {
-                            uuid: uuid.clone(),
-                            path: local_file_path.clone()
-                        }).ok();
+                        log::trace!("[{}] download success", uuid);
                         if self.delete_after {
                             sftp.unlink(&remote_file_path).await?;
+                            log::trace!("[{}] source file deleted {:?}", uuid, remote_file_path);
                         }
                     },
                     Err(err) => {
-                        event_broadcast.send(SftpReceiverEvent::Error {
-                            uuid: uuid,
-                            error: err.to_string()
-                        }).ok();
+                        log::error!("[{}] {:?}", uuid, err);
                     },
                 }
             }
         }
 
-        self.event_handler.shutdown().await;
+        log::trace!("complete");
         Ok(())
     }
 

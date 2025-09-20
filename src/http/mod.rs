@@ -3,8 +3,6 @@ mod crypto;
 #[cfg(feature = "http")]
 mod http_executor;
 #[cfg(feature = "http")]
-pub mod http_receiver_event;
-#[cfg(feature = "http")]
 pub mod http_receiver;
 #[cfg(feature = "http")]
 pub mod http_sender;

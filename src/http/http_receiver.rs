@@ -6,18 +6,17 @@ use hyper::{body::{Bytes, Incoming}, header::{HeaderName, HeaderValue}, service:
 use hyper_util::rt::TokioIo;
 use matchit::Router;
 use rustls::ServerConfig;
-use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, sync::mpsc::UnboundedSender, task::JoinSet};
+use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use crate::{common::event_handler::EventHandler, http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_receiver_event::HttpReceiverEvent, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, utils::result::ResultDyn };
+use crate::{http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, common::result::ResultDyn };
 
 type RouteCallback = Arc<dyn Fn(String, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 pub struct HttpReceiver {
     host: String,
     router: Router<RouteCallback>,
-    event_handler: EventHandler<HttpReceiverEvent>,
     tls_config: Option<ServerConfig>,
 }
 
@@ -27,7 +26,6 @@ impl HttpReceiver {
         HttpReceiver {
             host: host.as_ref().to_string(),
             router: Router::new(),
-            event_handler: EventHandler::new(),
             tls_config: None,
         }
     }
@@ -63,24 +61,11 @@ impl HttpReceiver {
         self
     }
 
-    /// Registers an asynchronous event handler callback for incoming `HttpReceiverEventSignal`s.
-    ///
-    /// This sets up a background task that listens for system signals (SIGTERM, SIGINT)
-    /// and incoming events from the internal event channel.
-    pub fn on_event<T, Fut>(mut self, handler: T) -> Self
-    where
-        T: Fn(HttpReceiverEvent) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.event_handler.init(handler);
-        self
-    }
-
     /// Starts the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
     ///
     /// This method binds to the configured host address and enters a loop to accept new TCP connections.
     /// It also listens for system termination signals (SIGINT, SIGTERM) to gracefully shut down the server.
-    pub async fn receive(mut self) {
+    pub async fn receive(self) {
         let tls_acceptor = self.tls_config.map(|tls_config| {
             TlsAcceptor::from(Arc::new(tls_config))
         });
@@ -89,8 +74,8 @@ impl HttpReceiver {
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
         let mut receiver_join_set = JoinSet::new();
         let router = Arc::new(self.router);
-        let event_broadcast = Arc::new(self.event_handler.broadcast());
         
+        log::trace!("started on {}", self.host);
         loop {
             tokio::select! {
                 _ = sigterm.recv() => break,
@@ -98,66 +83,53 @@ impl HttpReceiver {
                 result = listener.accept() => {
                     let uuid = Arc::new(Uuid::new_v4().to_string());
                     let tls_acceptor = tls_acceptor.clone();
-                    let event_broadcast = event_broadcast.clone();
                     let router = router.clone();
                     let (tcp_stream, client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
-                            event_broadcast.send(HttpReceiverEvent::Error {
-                                uuid: uuid.to_string(),
-                                error: err.to_string()
-                            }).ok();
+                            log::error!("[{}] {:?}", uuid, err);
                             continue;
                         },
                     };
 
-                    event_broadcast.send(HttpReceiverEvent::Connection {
-                        uuid: uuid.to_string(),
-                        ip: client_addr.ip().to_string()
-                    }).ok();
+                    log::trace!("[{}] connection {:?}", uuid, client_addr);
                     match tls_acceptor {
                         Some(acceptor) => {
-                            receiver_join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, router, event_broadcast));
+                            receiver_join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, router));
                         },
                         None => {
-                            receiver_join_set.spawn(Self::tcp_connection(tcp_stream, uuid, router, event_broadcast));
+                            receiver_join_set.spawn(Self::tcp_connection(tcp_stream, uuid, router));
                         },
                     }
                 }
             }
         }
 
-        self.event_handler.shutdown().await;
+        log::trace!("shut down pending...");
         while let Some(_) = receiver_join_set.join_next().await {}
+        log::trace!("shut down complete");
     }
 
-    async fn tcp_connection(tcp_stream: TcpStream, uuid: Arc<String>, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) {
+    async fn tcp_connection(tcp_stream: TcpStream, uuid: Arc<String>, router: Arc<Router<RouteCallback>>) {
         let service = {
             let uuid = uuid.clone();
             let router = router.clone();
-            let event_broadcast = event_broadcast.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, uuid.clone(), router.clone(), event_broadcast.clone())
+                Self::incoming_request(req, uuid.clone(), router.clone())
             })
         };
         
         let io = TokioIo::new(tcp_stream);
-        if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-            event_broadcast.send(HttpReceiverEvent::Error {
-                uuid: uuid.to_string(),
-                error: err.to_string()
-            }).ok();
+        if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
+            log::error!("[{}] {:?}", uuid, err);
         }
     }
 
-    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, uuid: Arc<String>, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) {
+    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, uuid: Arc<String>, router: Arc<Router<RouteCallback>>) {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
-                event_broadcast.send(HttpReceiverEvent::Error {
-                    uuid: uuid.to_string(),
-                    error: format!("TLS handshake failed: {:?}", err)
-                }).ok();
+                log::error!("[{}] TLS handshake failed {:?}", uuid, err);
                 return;
             },
         };
@@ -165,9 +137,8 @@ impl HttpReceiver {
         let service = {
             let uuid = uuid.clone();
             let router = router.clone();
-            let event_broadcast = event_broadcast.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, uuid.clone(), router.clone(), event_broadcast.clone())
+                Self::incoming_request(req, uuid.clone(), router.clone())
             })
         };
         
@@ -176,31 +147,23 @@ impl HttpReceiver {
         match protocol.as_deref() {
             Some(b"h2") => {
                 if let Err(err) = hyper::server::conn::http2::Builder::new(HttpExecutor).serve_connection(io, service).await {
-                    event_broadcast.send(HttpReceiverEvent::Error {
-                        uuid: uuid.to_string(),
-                        error: format!("TLS handshake failed: {:?}", err)
-                    }).ok();
+                    log::error!("[{}] TLS handshake failed {:?}", uuid, err);
                 }
             }
             _ => {
                 if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-                    event_broadcast.send(HttpReceiverEvent::Error {
-                        uuid: uuid.to_string(),
-                        error: err.to_string()
-                    }).ok();
+                    log::error!("[{}] {:?}", uuid, err);
                 }
             }
         }
     }
 
-    async fn incoming_request(req: Request<Incoming>, uuid: Arc<String>, router: Arc<Router<RouteCallback>>, event_broadcast: Arc<UnboundedSender<HttpReceiverEvent>>) -> Result<Response<Full<Bytes>>, Infallible> {
+    async fn incoming_request(req: Request<Incoming>, uuid: Arc<String>, router: Arc<Router<RouteCallback>>) -> Result<Response<Full<Bytes>>, Infallible> {
+        log::trace!("[{}] request received", uuid);
         let mut request = match Self::build_http_request(req).await {
             Ok(req) => req,
             Err(err) => {
-                event_broadcast.send(HttpReceiverEvent::Error {
-                    uuid: uuid.to_string(),
-                    error: err.to_string(),
-                }).ok();
+                log::error!("[{}] {:?}", uuid, err);
                 return Ok(Self::hyper_internal_server_error_response())
             },
         };
@@ -208,20 +171,13 @@ impl HttpReceiver {
         match router.at(&request.path) {
             Ok(matched) => {
                 request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
-                event_broadcast.send(HttpReceiverEvent::Request {
-                    uuid: uuid.to_string(),
-                    request: request.clone()
-                }).ok();
                 let callback = matched.value;
                 let callback_fut = callback(uuid.to_string(), request);
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 let response = match result {
                     Ok(res) => res,
                     Err(err) => {
-                        event_broadcast.send(HttpReceiverEvent::Error {
-                            uuid: uuid.to_string(),
-                            error: format!("{:?}", err),
-                        }).ok();
+                        log::error!("[{}] {:?}", uuid, err);
                         HttpResponse::internal_server_error()
                     }
                 };
@@ -229,41 +185,25 @@ impl HttpReceiver {
                 let hyper_res = match Self::build_http_response(response.clone()).await {
                     Ok(res) => res,
                     Err(err) => {
-                        event_broadcast.send(HttpReceiverEvent::Error {
-                            uuid: uuid.to_string(),
-                            error: err.to_string(),
-                        }).ok();
+                        log::error!("[{}] {:?}", uuid, err);
                         return Ok(Self::hyper_internal_server_error_response())
                     },
                 };
 
-                event_broadcast.send(HttpReceiverEvent::Response {
-                    uuid: uuid.to_string(),
-                    response: response
-                }).ok();
+                log::trace!("[{}] response sent", uuid);
                 Ok(hyper_res)
             },
             Err(_) => {
-                event_broadcast.send(HttpReceiverEvent::Request {
-                    uuid: uuid.to_string(),
-                    request: request.clone()
-                }).ok();
                 let response = HttpResponse::not_found();
                 let hyper_res = match Self::build_http_response(response.clone()).await {
                     Ok(res) => res,
                     Err(err) => {
-                        event_broadcast.send(HttpReceiverEvent::Error {
-                            uuid: uuid.to_string(),
-                            error: err.to_string(),
-                        }).ok();
+                        log::error!("[{}] {:?}", uuid, err);
                         return Ok(Self::hyper_internal_server_error_response())
                     },
                 };
 
-                event_broadcast.send(HttpReceiverEvent::Response {
-                    uuid: uuid.to_string(),
-                    response: response
-                }).ok();
+                log::trace!("[{}] response sent", uuid);
                 Ok(hyper_res)
             },
         }

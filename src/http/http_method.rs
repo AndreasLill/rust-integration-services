@@ -1,4 +1,6 @@
-use crate::utils::{error::Error, result::ResultDyn};
+use crate::{common::result::ResultDyn, utils::error::Error};
+
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpMethod {

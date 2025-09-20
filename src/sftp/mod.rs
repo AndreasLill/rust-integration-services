@@ -1,8 +1,6 @@
 #[cfg(feature = "sftp")]
 mod sftp_auth;
 #[cfg(feature = "sftp")]
-pub mod sftp_receiver_event;
-#[cfg(feature = "sftp")]
 pub mod sftp_receiver;
 #[cfg(feature = "sftp")]
 pub mod sftp_sender;

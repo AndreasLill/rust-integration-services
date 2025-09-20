@@ -4,8 +4,6 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveTime, Utc};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 use uuid::Uuid;
 
-use crate::{common::event_handler::EventHandler, schedule::schedule_receiver_event::ScheduleReceiverEvent};
-
 use super::schedule_interval::ScheduleInterval;
 
 type TriggerCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
@@ -13,7 +11,6 @@ type TriggerCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + S
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
     next_run: DateTime<Utc>,
-    event_handler: EventHandler<ScheduleReceiverEvent>,
     callback_trigger: TriggerCallback,
 }
 
@@ -22,7 +19,6 @@ impl ScheduleReceiver {
         ScheduleReceiver {
             interval: ScheduleInterval::None,
             next_run: Utc::now(),
-            event_handler: EventHandler::new(),
             callback_trigger: Arc::new(|_| Box::pin(async {})),
         }
     }
@@ -59,15 +55,6 @@ impl ScheduleReceiver {
         self
     }
 
-    pub fn on_event<T, Fut>(mut self, handler: T) -> Self
-    where
-        T: Fn(ScheduleReceiverEvent) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.event_handler.init(handler);
-        self
-    }
-
     pub fn trigger<T, Fut>(mut self, callback: T) -> Self
     where
         T: Fn(String) -> Fut + Send + Sync + 'static,
@@ -81,7 +68,6 @@ impl ScheduleReceiver {
         let mut receiver_join_set = JoinSet::new();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
-        let event_broadcast = Arc::new(self.event_handler.broadcast());
 
         let now_timestamp = Utc::now().timestamp();
         let next_run_timestamp = self.next_run.timestamp();
@@ -89,6 +75,7 @@ impl ScheduleReceiver {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
+        log::trace!("started, next run at {:?}", self.next_run);
         receiver_join_set.spawn(async move {
             loop {
                 let now = Utc::now();
@@ -101,18 +88,18 @@ impl ScheduleReceiver {
                 }
 
                 let uuid = Uuid::new_v4().to_string();
-                event_broadcast.send(ScheduleReceiverEvent::Trigger{uuid: uuid.clone()}).ok();
+                log::trace!("[{}] trigger started", uuid);
                 let callback_handle = tokio::spawn((self.callback_trigger)(uuid.clone())).await;
                 if let Err(err) = callback_handle {
-                    event_broadcast.send(ScheduleReceiverEvent::Error {
-                        uuid: uuid.clone(),
-                        error: err.to_string()
-                    }).ok();
+                    log::trace!("[{}] {:?}", uuid, err);
                 }
+                log::trace!("[{}] trigger completed", uuid);
                 
                 if self.interval == ScheduleInterval::None {
                     break;
                 }
+
+                log::trace!("next run at {:?}", self.next_run);
             }
         });
 
@@ -134,7 +121,7 @@ impl ScheduleReceiver {
             }
         }
 
-        self.event_handler.shutdown().await;
+        log::trace!("shut down complete");
     }
 
     async fn calculate_next_run(next_run: DateTime<Utc>, interval: ScheduleInterval) -> DateTime<Utc> {
