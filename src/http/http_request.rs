@@ -26,34 +26,34 @@ impl HttpRequest {
 
     /// Creates a http request with the method `GET`
     pub fn get() -> Self {
-        Self::new().method("GET")
+        Self::new().with_method("GET")
     }
 
     /// Creates a http request with the method `POST`
     pub fn post() -> Self {
-        Self::new().method("POST")
+        Self::new().with_method("POST")
     }
 
     /// Sets the HTTP request method.
-    pub fn method<T: AsRef<str>>(mut self, method: T) -> Self {
+    pub fn with_method<T: AsRef<str>>(mut self, method: T) -> Self {
         self.method = HttpMethod::from_str(method.as_ref()).expect("Invalid HTTP method");
         self
     }
 
     /// Sets the HTTP request path.
-    pub fn path<T: AsRef<str>>(mut self, path: T) -> Self {
+    pub fn with_path<T: AsRef<str>>(mut self, path: T) -> Self {
         self.path = path.as_ref().to_string();
         self
     }
 
     /// Sets the HTTP request body.
-    pub fn body(mut self, body: &[u8]) -> Self {
+    pub fn with_body(mut self, body: &[u8]) -> Self {
         self.body = Bytes::copy_from_slice(body);
         self
     }
 
     /// Adds or updates a header in the HTTP request.
-    pub fn header<T: AsRef<str>>(mut self, key: T, value: T) -> Self {
+    pub fn with_header<T: AsRef<str>>(mut self, key: T, value: T) -> Self {
         self.headers.insert(key.as_ref().to_string(), value.as_ref().to_string());
         self
     }

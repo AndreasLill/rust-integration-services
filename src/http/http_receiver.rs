@@ -235,8 +235,8 @@ impl HttpReceiver {
         let mut request = HttpRequest::new();
         request.method = HttpMethod::from_str(parts.method.as_str()).unwrap();
         request.path = parts.uri.path().to_string();
-        for (key, value) in parts.headers {
-            if let (Some(key), Ok(value)) = (key, value.to_str()) {
+        for (key, value) in parts.headers.iter() {
+            if let Ok(value) = value.to_str() {
                 request.headers.insert(key.to_string(), value.to_string());
             }
         }
@@ -246,9 +246,9 @@ impl HttpReceiver {
 
     async fn build_http_response(res: HttpResponse) -> Response<Full<Bytes>> {
         let mut response: Response<Full<Bytes>> = Response::builder().status(res.status.code()).body(res.body.into()).unwrap();
-        for (key, value) in res.headers {
+        for (key, value) in res.headers.iter() {
             let header_name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-            let header_value = HeaderValue::from_str(&value).unwrap();
+            let header_value = HeaderValue::from_bytes(&value.as_bytes()).unwrap();
             response.headers_mut().insert(header_name, header_value);
         }
         response
