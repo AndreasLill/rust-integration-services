@@ -1,18 +1,18 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
+use std::{collections::HashMap, path::{Path, PathBuf}};
 
 use bytes::Bytes;
 use regex::Regex;
-use russh_sftp::client::SftpSession;
+use russh::keys::HashAlg;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}};
 
-use crate::sftp::{sftp_auth_basic::SftpAuthBasic, ssh_client::SshClient};
+use crate::sftp::{sftp, sftp_auth_basic::SftpAuthBasic, sftp_auth_key::SftpAuthKey, sftp_authentication::SftpAuthentication};
 
 pub struct SftpReceiver {
     host: String,
     remote_dir: PathBuf,
     delete_after_download: bool,
     regex: Regex,
-    auth_basic: Option<SftpAuthBasic>,
+    authentication: SftpAuthentication,
 }
 
 impl SftpReceiver {
@@ -22,15 +22,30 @@ impl SftpReceiver {
             remote_dir: PathBuf::from("/"),
             delete_after_download: false,
             regex: Regex::new(r"^.+\.[^./\\]+$").unwrap(),
-            auth_basic: None,
+            authentication: SftpAuthentication::new(),
         }
     }
 
     /// Basic authentication using password.
     pub fn auth_basic<T: AsRef<str>>(mut self, user: T, password: T) -> Self {
-        self.auth_basic = Some(SftpAuthBasic {
+        self.authentication.basic = Some(SftpAuthBasic {
             user: user.as_ref().to_string(),
             password: password.as_ref().to_string()
+        });
+        self
+    }
+
+    /// Authentication using a private key.
+    /// What hash algorithm to choose?
+    /// Ed25519 = None
+    /// ECDSA = None
+    /// RSA = Some(HashAlg::Sha256) or Some(HashAlg::Sha512)
+    pub fn auth_key<T: AsRef<str>>(mut self, user: T, key_path: T, hash_alg: Option<HashAlg>, passphrase: Option<String>) -> Self {
+        self.authentication.key = Some(SftpAuthKey {
+            user: user.as_ref().to_string(),
+            key_path: PathBuf::from(key_path.as_ref()),
+            hash_alg,
+            passphrase
         });
         self
     }
@@ -55,10 +70,9 @@ impl SftpReceiver {
         self
     }
 
+    /// Download all files from the sftp server to the local file system.
     pub async fn receive_to_path<T: AsRef<Path>>(self, target_path: T) -> anyhow::Result<()> {
-        let sftp = self.connect_and_authenticate().await?;
-        tracing::debug!("connected to {}", &self.host);
-
+        let sftp = sftp::connect_and_authenticate(&self.host, &self.authentication).await?;
         let entries = sftp.read_dir(self.remote_dir.to_str().unwrap()).await?;
 
         for entry in entries {
@@ -92,14 +106,13 @@ impl SftpReceiver {
             }
         }
 
-        tracing::debug!("complete");
         Ok(())
     }
 
+    /// Download all files from the sftp server.
+    /// Returns a HashMap with file name as key and bytes as value.
     pub async fn receive_to_bytes(self) -> anyhow::Result<HashMap<String, Bytes>> {
-        let sftp = self.connect_and_authenticate().await?;
-        tracing::debug!("connected to {}", &self.host);
-
+        let sftp = sftp::connect_and_authenticate(&self.host, &self.authentication).await?;
         let mut files = HashMap::<String, Bytes>::new();
         let entries = sftp.read_dir(self.remote_dir.to_str().unwrap()).await?;
 
@@ -126,25 +139,6 @@ impl SftpReceiver {
             }
         }
 
-        tracing::debug!("complete");
         Ok(files)
-    }
-
-    async fn connect_and_authenticate(&self) -> anyhow::Result<SftpSession> {
-        let config = russh::client::Config::default();
-        let ssh = SshClient {};
-
-        tracing::debug!("connecting to {}", &self.host);
-        let mut session = russh::client::connect(Arc::new(config), &self.host, ssh).await?;
-        
-        if let Some(auth) = &self.auth_basic {
-            session.authenticate_password(&auth.user, &auth.password).await?;
-        }
-
-        let channel = session.channel_open_session().await?;
-        channel.request_subsystem(true, "sftp").await?;
-        let sftp = SftpSession::new(channel.into_stream()).await?;
-
-        Ok(sftp)
     }
 }

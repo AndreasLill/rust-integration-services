@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -32,7 +32,6 @@ rustls-pemfile = { version = "2.2.0", optional = true }
 regex = { version = "1.11.2", optional = true }
 chrono = { version = "0.4.42", optional = true }
 russh = { version = "0.54.3", optional = true }
-russh-keys = { version = "0.49.2", optional = true }
 russh-sftp =  { version = "2.1.1", optional = true }
 
 [dev-dependencies]
@@ -45,4 +44,4 @@ full = ["file", "schedule", "sftp", "http"]
 http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "matchit", "bytes"]
 file = ["regex"]
 schedule = ["chrono"]
-sftp = ["russh", "russh-keys", "russh-sftp", "regex", "bytes"]
+sftp = ["russh", "russh-sftp", "regex", "bytes"]

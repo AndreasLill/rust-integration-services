@@ -1,14 +1,14 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::path::{Path, PathBuf};
 
-use russh_sftp::client::SftpSession;
+use russh::keys::HashAlg;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}};
 
-use crate::sftp::{sftp_auth_basic::SftpAuthBasic, ssh_client::SshClient};
+use crate::sftp::{sftp, sftp_authentication::SftpAuthentication, sftp_auth_basic::SftpAuthBasic, sftp_auth_key::SftpAuthKey};
 
 pub struct SftpSender {
     host: String,
     remote_dir: PathBuf,
-    auth_basic: Option<SftpAuthBasic>,
+    authentication: SftpAuthentication,
 }
 
 impl SftpSender {
@@ -16,15 +16,30 @@ impl SftpSender {
         SftpSender { 
             host: host.as_ref().to_string(),
             remote_dir: PathBuf::from("/"),
-            auth_basic: None,
+            authentication: SftpAuthentication::new(),
         }
     }
 
     /// Basic authentication using password.
     pub fn auth_basic<T: AsRef<str>>(mut self, user: T, password: T) -> Self {
-        self.auth_basic = Some(SftpAuthBasic {
+        self.authentication.basic = Some(SftpAuthBasic {
             user: user.as_ref().to_string(),
             password: password.as_ref().to_string()
+        });
+        self
+    }
+
+    /// Authentication using a private key.
+    /// What hash algorithm to choose?
+    /// Ed25519 = None
+    /// ECDSA = None
+    /// RSA = Some(HashAlg::Sha256) or Some(HashAlg::Sha512)
+    pub fn auth_key<T: AsRef<str>>(mut self, user: T, key_path: T, hash_alg: Option<HashAlg>, passphrase: Option<String>) -> Self {
+        self.authentication.key = Some(SftpAuthKey {
+            user: user.as_ref().to_string(),
+            key_path: PathBuf::from(key_path.as_ref()),
+            hash_alg,
+            passphrase
         });
         self
     }
@@ -35,10 +50,9 @@ impl SftpSender {
         self
     }
 
+    /// Send a file from the local file system to the sftp server.
     pub async fn send_file<T: AsRef<Path>>(self, file_path: T, file_name: Option<String>) -> anyhow::Result<()> {
-        let sftp = self.connect_and_authenticate().await?;
-        tracing::debug!("connected to {}", &self.host);
-
+        let sftp = sftp::connect_and_authenticate(&self.host, &self.authentication).await?;
         let file_name = match file_name {
             Some(name) => name,
             None => file_path.as_ref().file_name().unwrap().to_string_lossy().to_string(),
@@ -61,10 +75,9 @@ impl SftpSender {
         Ok(())
     }
 
+    // Send bytes as a file to the sftp server.
     pub async fn send_bytes<S: AsRef<str>>(self, bytes: &[u8], file_name: S) -> anyhow::Result<()> {
-        let sftp = self.connect_and_authenticate().await?;
-        tracing::debug!("connected to {}", &self.host);
-
+        let sftp = sftp::connect_and_authenticate(&self.host, &self.authentication).await?;
         let remote_file_path = self.remote_dir.join(file_name.as_ref());
         let mut remote_file = sftp.create(remote_file_path.to_str().unwrap()).await?;
         tracing::debug!("uploading bytes to {:?}", &remote_file_path);
@@ -72,23 +85,5 @@ impl SftpSender {
 
         tracing::debug!("upload complete");
         Ok(())
-    }
-
-    async fn connect_and_authenticate(&self) -> anyhow::Result<SftpSession> {
-        let config = russh::client::Config::default();
-        let ssh = SshClient {};
-
-        tracing::debug!("connecting to {}", &self.host);
-        let mut session = russh::client::connect(Arc::new(config), &self.host, ssh).await?;
-        
-        if let Some(auth) = &self.auth_basic {
-            session.authenticate_password(&auth.user, &auth.password).await?;
-        }
-
-        let channel = session.channel_open_session().await?;
-        channel.request_subsystem(true, "sftp").await?;
-        let sftp = SftpSession::new(channel.into_stream()).await?;
-
-        Ok(sftp)
     }
 }

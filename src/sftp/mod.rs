@@ -1,5 +1,11 @@
 #[cfg(feature = "sftp")]
+mod sftp;
+#[cfg(feature = "sftp")]
+mod sftp_authentication;
+#[cfg(feature = "sftp")]
 mod sftp_auth_basic;
+#[cfg(feature = "sftp")]
+mod sftp_auth_key;
 #[cfg(feature = "sftp")]
 pub mod ssh_client;
 #[cfg(feature = "sftp")]
