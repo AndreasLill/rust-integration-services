@@ -1,7 +1,3 @@
-use crate::{common::result::ResultDyn, utils::error::Error};
-
-
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpMethod {
     Get,
@@ -30,7 +26,7 @@ impl HttpMethod {
         }
     }
 
-    pub fn from_str<T: AsRef<str>>(method: T) -> ResultDyn<HttpMethod> {
+    pub fn from_str<T: AsRef<str>>(method: T) -> anyhow::Result<HttpMethod> {
         match method.as_ref().to_ascii_uppercase().as_str() {
             "GET" => Ok(HttpMethod::Get),
             "POST" => Ok(HttpMethod::Post),
@@ -41,7 +37,7 @@ impl HttpMethod {
             "OPTIONS" => Ok(HttpMethod::Options),
             "CONNECT" => Ok(HttpMethod::Connect),
             "TRACE" => Ok(HttpMethod::Trace),
-            _ => Err(Box::new(Error::std_io("Invalid HTTP method"))),
+            _ => Err(anyhow::anyhow!("Invalid HTTP method")),
         }
     }
 }

@@ -1,4 +1,3 @@
-mod utils;
 mod common;
 
 #[cfg(feature = "http")]

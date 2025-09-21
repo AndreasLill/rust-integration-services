@@ -76,7 +76,7 @@ impl ScheduleReceiver {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
-        log::trace!("started, next run at {:?}", self.next_run);
+        tracing::trace!("started, next run at {:?}", self.next_run);
         receiver_join_set.spawn(async move {
             loop {
                 let now = Utc::now();
@@ -89,19 +89,19 @@ impl ScheduleReceiver {
                 }
 
                 let uuid = Uuid::new_v4().to_string();
-                log::trace!("[{}] trigger started", uuid);
+                tracing::trace!("[{}] trigger started", uuid);
                 let callback_fut = (self.callback_trigger)(uuid.clone());
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 if let Err(err) = result {
-                    log::trace!("[{}] {:?}", uuid, err);
+                    tracing::trace!("[{}] {:?}", uuid, err);
                 }
-                log::trace!("[{}] trigger completed", uuid);
+                tracing::trace!("[{}] trigger completed", uuid);
                 
                 if self.interval == ScheduleInterval::None {
                     break;
                 }
 
-                log::trace!("next run at {:?}", self.next_run);
+                tracing::trace!("next run at {:?}", self.next_run);
             }
         });
 
@@ -123,7 +123,7 @@ impl ScheduleReceiver {
             }
         }
 
-        log::trace!("shut down complete");
+        tracing::trace!("shut down complete");
     }
 
     async fn calculate_next_run(next_run: DateTime<Utc>, interval: ScheduleInterval) -> DateTime<Utc> {

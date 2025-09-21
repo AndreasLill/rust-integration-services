@@ -1,1 +1,0 @@
-pub type ResultDyn<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

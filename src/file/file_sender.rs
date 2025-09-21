@@ -29,7 +29,7 @@ impl FileSender {
     }
 
     /// Writes the bytes to the target file.
-    pub async fn send_bytes(self, bytes: &[u8]) -> tokio::io::Result<()> {
+    pub async fn send_bytes(self, bytes: &[u8]) -> anyhow::Result<()> {
         let mut file = OpenOptions::new().create(true).write(true).append(!self.overwrite).truncate(self.overwrite).open(&self.target_path).await?;
 
         if !self.overwrite && file.metadata().await?.len() > 0 {
@@ -41,21 +41,21 @@ impl FileSender {
     }
 
     /// Writes the string to the target file.
-    pub async fn send_string<T: AsRef<str>>(self, string: T) -> tokio::io::Result<()> {
+    pub async fn send_string<T: AsRef<str>>(self, string: T) -> anyhow::Result<()> {
         self.send_bytes(string.as_ref().as_bytes()).await
     }
 
     /// Copy the contents of the source file to the target file.
-    pub async fn send_copy<T: AsRef<Path>>(self, source_path: T) -> tokio::io::Result<()> {
+    pub async fn send_copy<T: AsRef<Path>>(self, source_path: T) -> anyhow::Result<()> {
         self.copy(source_path, false).await
     }
 
     /// Copy the contents of the source file to the target file and delete the source file if successful.
-    pub async fn send_move<T: AsRef<Path>>(self, source_path: T) -> tokio::io::Result<()> {
+    pub async fn send_move<T: AsRef<Path>>(self, source_path: T) -> anyhow::Result<()> {
         self.copy(source_path, true).await
     }
 
-    async fn copy<T: AsRef<Path>>(self, source_path: T, delete_file_on_success: bool) -> tokio::io::Result<()> {
+    async fn copy<T: AsRef<Path>>(self, source_path: T, delete_file_on_success: bool) -> anyhow::Result<()> {
         tokio::fs::copy(&source_path, &self.target_path).await?;
 
         if delete_file_on_success {

@@ -1,46 +1,32 @@
 # SftpReceiver
 
-Download all files from `127.0.0.1:22` user remote directory `upload` and delete files after successful download.  
-That way files can be processed asyncronously without blocking other downloads.
-
+Download all files matching regex `.*\.txt$` from `127.0.0.1:22` user remote directory `upload` to local path `/home/user/output` and delete remote files after successful download.
 ``` rust
-let result = SftpReceiver::new("127.0.0.1:22", "user")
-.auth_password("pass")
+let result = SftpReceiver::new("127.0.0.1:22")
+.auth_basic("user", "password")
 .remote_dir("upload")
-.delete_after(true)
-.receive_once("/home/user/files")
+.regex(r".*\.txt$")
+.delete_after_download(true)
+.receive_to_path("/home/user/output")
 .await;
 ```
-
-By setting a custom regex to the receiver, the sftp receiver will only download files matching this regex.  
-For examplem this will only download files starting with "ABC_".
-
-``` rust
-.regex("^ABC_.+\.[^./\\]+$")
-```
-
 
 # SftpSender
 
-Send a file to `127.0.0.1:22` user remote path `upload` keeping the same file name.  
-A private key with a passphrase is used as authentication in this example.
-
+Send a file to `127.0.0.1:22` user remote path `upload` keeping the same file name.
 ``` rust
-let result = SftpSender::new("127.0.0.1:22", "user")
-.private_key("/home/user/.ssh/id_rsa", Some("secret"))
-.remote_path("upload")
-.send_file("/home/user/files/data.txt")
+let result = SftpSender::new("127.0.0.1:22")
+.auth_basic("user", "password")
+.remote_dir("upload")
+.send_file("/home/user/input/file.txt", None)
 .await;
 ```
 
-Send a string as a file to `127.0.0.1:22` user remote path `upload` with a new file name.  
-A basic password is used as authentication in this example.
-
+Send a string as a file to `127.0.0.1:22` user remote path `upload` with file name `file.txt`.
 ``` rust
-let result = SftpSender::new("127.0.0.1:22", "user")
-.password("secret")
-.remote_path("upload")
-.file_name("data.txt")
-.send_string("a very beautiful important string")
+let result = SftpSender::new("127.0.0.1:22")
+.auth_basic("user", "password")
+.remote_dir("upload")
+.send_bytes("HELLO WORLD".as_bytes(), "file.txt")
 .await;
 ```

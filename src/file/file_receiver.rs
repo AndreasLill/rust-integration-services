@@ -43,7 +43,7 @@ impl FileReceiver {
         let route_map = Arc::new(self.routes.clone());
         let mut size_map = HashMap::<String, u64>::new();
         
-        log::trace!("started on {:?}", self.source_path);
+        tracing::trace!("started on {:?}", self.source_path);
         loop {
             tokio::select! {
                 _ = sigterm.recv() => break,
@@ -88,13 +88,13 @@ impl FileReceiver {
                                 let file_path = Arc::new(file_path.to_path_buf());
                                 let uuid = Uuid::new_v4().to_string();
                             
-                                log::trace!("[{}] file received at {:?}", uuid, file_path);
+                                tracing::trace!("[{}] file received at {:?}", uuid, file_path);
                                 receiver_join_set.spawn(async move {
                                     let callback_fut = callback(uuid.to_string(), file_path.to_path_buf());
                                     let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                                     match result {
-                                        Ok(_) => log::trace!("[{}] file processed", uuid),
-                                        Err(err) => log::error!("[{}] {:?}", uuid, err),
+                                        Ok(_) => tracing::trace!("[{}] file processed", uuid),
+                                        Err(err) => tracing::error!("[{}] {:?}", uuid, err),
                                     };
 
                                     let mut unlocked_list = lock_list.lock().await;
@@ -109,12 +109,12 @@ impl FileReceiver {
             }
         }
 
-        log::trace!("shut down pending...");
+        tracing::trace!("shut down pending...");
         while let Some(_) = receiver_join_set.join_next().await {}
-        log::trace!("shut down complete");
+        tracing::trace!("shut down complete");
     }
 
-    async fn get_files_in_directory(path: &Path) -> tokio::io::Result<Vec<PathBuf>> {
+    async fn get_files_in_directory(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
         let mut files: Vec<PathBuf> = Vec::new();
         let mut entries = tokio::fs::read_dir(&path).await?;
 

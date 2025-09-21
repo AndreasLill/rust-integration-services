@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::{common::result::ResultDyn, http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, utils::error::Error};
+use crate::http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
 
 pub struct HttpSender {
     url: String,
@@ -63,29 +63,35 @@ impl HttpSender {
     /// If the URL scheme is `"http"`, HTTP/1.1 will be used for the request.
     /// 
     /// If the URL scheme is `"https"`, a secure TLS connection is established and ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
-    pub async fn send(&self, request: HttpRequest) -> ResultDyn<HttpResponse> {
+    pub async fn send(&self, request: HttpRequest) -> anyhow::Result<HttpResponse> {
         let url = self.url.parse::<Uri>()?;
-        let scheme = url.scheme_str().ok_or("URL is missing a scheme.")?;
+        let scheme = match url.scheme_str() {
+            Some(scheme) => scheme,
+            None => return Err(anyhow::anyhow!("URL is missing a scheme.")),
+        };
 
         if self.http1_only && self.http2_only {
-            return Err(Box::new(Error::tokio_io("Use of both http1_only and http2_only")));
+            return Err(anyhow::anyhow!("Use of both http1_only and http2_only"))
         }
 
         match scheme {
             "http" => {
                 if self.http2_only {
-                    return Err(Box::new(Error::tokio_io("https scheme is required for HTTP/2")));
+                    return Err(anyhow::anyhow!("https scheme is required for HTTP/2"));
                 }
                 self.send_tcp(url, request).await
             },
             "https" => self.send_tls(url, request).await,
-            _ => Err(Box::new(Error::tokio_io(format!("Unsupported scheme: {}", scheme))))
+            _ => Err(anyhow::anyhow!("Unsupported scheme: {}", scheme)),
         }
     }
 
     
-    async fn send_tcp(&self, url: Uri, request: HttpRequest) -> ResultDyn<HttpResponse> {
-        let host = url.host().ok_or("Invalid URL.")?;
+    async fn send_tcp(&self, url: Uri, request: HttpRequest) -> anyhow::Result<HttpResponse> {
+        let host = match url.host() {
+            Some(host) => host,
+            None => return Err(anyhow::anyhow!("Invalid URL.")),
+        };
         let port = url.port_u16().unwrap_or(80);
         
         let stream = TcpStream::connect((host, port)).await?;
@@ -104,8 +110,11 @@ impl HttpSender {
         Ok(response)
     }
     
-    async fn send_tls(&self, url: Uri, request: HttpRequest) -> ResultDyn<HttpResponse> {
-        let host = url.host().ok_or("Invalid URL.")?;
+    async fn send_tls(&self, url: Uri, request: HttpRequest) -> anyhow::Result<HttpResponse> {
+        let host = match url.host() {
+            Some(host) => host,
+            None => return Err(anyhow::anyhow!("Invalid URL.")),
+        };
         let port = url.port_u16().unwrap_or(443);
         let domain = rustls::pki_types::ServerName::try_from(host.to_string())?;
         
@@ -166,12 +175,12 @@ impl HttpSender {
                 Ok(response)
             }
             _ => {
-                Err(Box::new(Error::std_io("Unsupported HTTP version")))
+                Err(anyhow::anyhow!("Unsupported HTTP version"))
             }
         }
     }
 
-    async fn build_http_request(url: Uri, request: HttpRequest, version: Version) -> ResultDyn<Request<Full<Bytes>>> {
+    async fn build_http_request(url: Uri, request: HttpRequest, version: Version) -> anyhow::Result<Request<Full<Bytes>>> {
         let mut req = match version {
             Version::HTTP_2 => {
                 Request::builder()
@@ -181,7 +190,10 @@ impl HttpSender {
                     .body(request.body.into())?
             }
             Version::HTTP_11 => {
-                let authority = url.authority().ok_or("Invalid URL.")?;
+                let authority = match url.authority() {
+                    Some(authority) => authority,
+                    None => return Err(anyhow::anyhow!("Invalid URL.")),
+                };
                 let path = url.path();
 
                 Request::builder()
@@ -191,7 +203,7 @@ impl HttpSender {
                     .header(hyper::header::HOST, authority.as_str())
                     .body(request.body.into())?
             }
-            _ => return Err(Box::new(Error::std_io("Unsupported HTTP version")))
+            _ => return Err(anyhow::anyhow!("Unsupported HTTP version"))
         };
 
         for (key, value) in request.headers {
@@ -203,7 +215,7 @@ impl HttpSender {
         Ok(req)
     }
 
-    async fn build_http_response(res: Response<Incoming>) -> ResultDyn<HttpResponse> {
+    async fn build_http_response(res: Response<Incoming>) -> anyhow::Result<HttpResponse> {
         let (parts, body) = res.into_parts();
         let mut response = HttpResponse::new();
         response.status = HttpStatus::from_code(parts.status.as_u16())?;

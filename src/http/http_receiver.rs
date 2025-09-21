@@ -10,7 +10,7 @@ use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, t
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-use crate::{http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus}, common::result::ResultDyn };
+use crate::http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
 
 type RouteCallback = Arc<dyn Fn(String, HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
@@ -40,7 +40,7 @@ impl HttpReceiver {
         self
     }
 
-    fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> ResultDyn<ServerConfig> {
+    fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> anyhow::Result<ServerConfig> {
         let certs = Crypto::pem_load_certs(cert_path)?;
         let key = Crypto::pem_load_private_key(key_path)?;
         let config = ServerConfig::builder()
@@ -75,7 +75,7 @@ impl HttpReceiver {
         let mut receiver_join_set = JoinSet::new();
         let router = Arc::new(self.router);
         
-        log::trace!("started on {}", self.host);
+        tracing::trace!("started on {}", self.host);
         loop {
             tokio::select! {
                 _ = sigterm.recv() => break,
@@ -87,12 +87,12 @@ impl HttpReceiver {
                     let (tcp_stream, client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
-                            log::error!("[{}] {:?}", uuid, err);
+                            tracing::error!("[{}] {:?}", uuid, err);
                             continue;
                         },
                     };
 
-                    log::trace!("[{}] connection {:?}", uuid, client_addr);
+                    tracing::trace!("[{}] connection {:?}", uuid, client_addr);
                     match tls_acceptor {
                         Some(acceptor) => {
                             receiver_join_set.spawn(Self::tls_connection(acceptor, tcp_stream, uuid, router));
@@ -105,9 +105,9 @@ impl HttpReceiver {
             }
         }
 
-        log::trace!("shut down pending...");
+        tracing::trace!("shut down pending...");
         while let Some(_) = receiver_join_set.join_next().await {}
-        log::trace!("shut down complete");
+        tracing::trace!("shut down complete");
     }
 
     async fn tcp_connection(tcp_stream: TcpStream, uuid: Arc<String>, router: Arc<Router<RouteCallback>>) {
@@ -121,7 +121,7 @@ impl HttpReceiver {
         
         let io = TokioIo::new(tcp_stream);
         if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
-            log::error!("[{}] {:?}", uuid, err);
+            tracing::error!("[{}] {:?}", uuid, err);
         }
     }
 
@@ -129,7 +129,7 @@ impl HttpReceiver {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
-                log::error!("[{}] TLS handshake failed {:?}", uuid, err);
+                tracing::error!("[{}] TLS handshake failed {:?}", uuid, err);
                 return;
             },
         };
@@ -147,23 +147,23 @@ impl HttpReceiver {
         match protocol.as_deref() {
             Some(b"h2") => {
                 if let Err(err) = hyper::server::conn::http2::Builder::new(HttpExecutor).serve_connection(io, service).await {
-                    log::error!("[{}] TLS handshake failed {:?}", uuid, err);
+                    tracing::error!("[{}] TLS handshake failed {:?}", uuid, err);
                 }
             }
             _ => {
                 if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
-                    log::error!("[{}] {:?}", uuid, err);
+                    tracing::error!("[{}] {:?}", uuid, err);
                 }
             }
         }
     }
 
     async fn incoming_request(req: Request<Incoming>, uuid: Arc<String>, router: Arc<Router<RouteCallback>>) -> Result<Response<Full<Bytes>>, Infallible> {
-        log::trace!("[{}] request received", uuid);
+        tracing::trace!("[{}] request received", uuid);
         let mut request = match Self::build_http_request(req).await {
             Ok(req) => req,
             Err(err) => {
-                log::error!("[{}] {:?}", uuid, err);
+                tracing::error!("[{}] {:?}", uuid, err);
                 return Ok(Self::hyper_internal_server_error_response())
             },
         };
@@ -177,7 +177,7 @@ impl HttpReceiver {
                 let response = match result {
                     Ok(res) => res,
                     Err(err) => {
-                        log::error!("[{}] {:?}", uuid, err);
+                        tracing::error!("[{}] {:?}", uuid, err);
                         HttpResponse::internal_server_error()
                     }
                 };
@@ -185,12 +185,12 @@ impl HttpReceiver {
                 let hyper_res = match Self::build_http_response(response.clone()).await {
                     Ok(res) => res,
                     Err(err) => {
-                        log::error!("[{}] {:?}", uuid, err);
+                        tracing::error!("[{}] {:?}", uuid, err);
                         return Ok(Self::hyper_internal_server_error_response())
                     },
                 };
 
-                log::trace!("[{}] response sent", uuid);
+                tracing::trace!("[{}] response sent", uuid);
                 Ok(hyper_res)
             },
             Err(_) => {
@@ -198,18 +198,18 @@ impl HttpReceiver {
                 let hyper_res = match Self::build_http_response(response.clone()).await {
                     Ok(res) => res,
                     Err(err) => {
-                        log::error!("[{}] {:?}", uuid, err);
+                        tracing::error!("[{}] {:?}", uuid, err);
                         return Ok(Self::hyper_internal_server_error_response())
                     },
                 };
 
-                log::trace!("[{}] response sent", uuid);
+                tracing::trace!("[{}] response sent", uuid);
                 Ok(hyper_res)
             },
         }
     }
 
-    async fn build_http_request(req: Request<Incoming>) -> ResultDyn<HttpRequest> {
+    async fn build_http_request(req: Request<Incoming>) -> anyhow::Result<HttpRequest> {
         let (parts, body) = req.into_parts();
         let mut request = HttpRequest::new();
         request.method = HttpMethod::from_str(parts.method.as_str())?;
@@ -223,7 +223,7 @@ impl HttpReceiver {
         Ok(request)
     }
 
-    async fn build_http_response(res: HttpResponse) -> ResultDyn<Response<Full<Bytes>>> {
+    async fn build_http_response(res: HttpResponse) -> anyhow::Result<Response<Full<Bytes>>> {
         let mut response: Response<Full<Bytes>> = Response::builder().status(res.status.code()).body(res.body.into())?;
         for (key, value) in res.headers.iter() {
             let header_name = HeaderName::from_bytes(key.as_bytes())?;

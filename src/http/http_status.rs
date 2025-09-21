@@ -1,7 +1,3 @@
-use crate::{common::result::ResultDyn, utils::error::Error};
-
-
-
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpStatus {
@@ -83,7 +79,7 @@ impl HttpStatus {
         }
     }
 
-    pub fn from_code(code: u16) -> ResultDyn<Self> {
+    pub fn from_code(code: u16) -> anyhow::Result<Self> {
         match code {
             100 => Ok(HttpStatus::Continue),
             101 => Ok(HttpStatus::SwitchingProtocols),
@@ -114,7 +110,7 @@ impl HttpStatus {
             503 => Ok(HttpStatus::ServiceUnavailable),
             504 => Ok(HttpStatus::GatewayTimeout),
 
-            _ => Err(Box::new(Error::std_io("Invalid HTTP status code"))),
+            _ => Err(anyhow::anyhow!("Invalid HTTP status code")),
         }
     }
 }

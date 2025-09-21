@@ -1,59 +1,49 @@
-use std::path::{Path, PathBuf};
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 
-use async_ssh2_lite::{AsyncFile, AsyncSession, SessionConfiguration, TokioTcpStream};
-use futures_util::{AsyncReadExt};
+use bytes::Bytes;
 use regex::Regex;
-use tokio::{fs::{File, OpenOptions}, io::AsyncWriteExt};
-use tokio::net::TcpStream;
-use uuid::Uuid;
+use russh_sftp::client::SftpSession;
+use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}};
 
-use super::sftp_auth::SftpAuth;
-use crate::utils::error::Error;
+use crate::sftp::{sftp_auth_basic::SftpAuthBasic, ssh_client::SshClient};
 
 pub struct SftpReceiver {
     host: String,
-    remote_path: PathBuf,
-    delete_after: bool,
+    remote_dir: PathBuf,
+    delete_after_download: bool,
     regex: Regex,
-    auth: SftpAuth,
+    auth_basic: Option<SftpAuthBasic>,
 }
 
 impl SftpReceiver {
-    pub fn new<T: AsRef<str>>(host: T, user: T) -> Self {
+    pub fn new<T: AsRef<str>>(host: T) -> Self {
         SftpReceiver { 
             host: host.as_ref().to_string(),
-            remote_path: PathBuf::new(),
-            delete_after: false,
+            remote_dir: PathBuf::from("/"),
+            delete_after_download: false,
             regex: Regex::new(r"^.+\.[^./\\]+$").unwrap(),
-            auth: SftpAuth { user: user.as_ref().to_string(), password: None, private_key: None, private_key_passphrase: None },
+            auth_basic: None,
         }
     }
 
-    /// Sets the password for authentication.
-    pub fn password<T: AsRef<str>>(mut self, password: T) -> Self {
-        self.auth.password = Some(password.as_ref().to_string());
-        self
-    }
-
-    /// Sets the private key path and passphrase for authentication.
-    pub fn private_key<T: AsRef<Path>, S: AsRef<str>>(mut self, key_path: T, passphrase: Option<S>) -> Self {
-        self.auth.private_key = Some(key_path.as_ref().to_path_buf());
-        self.auth.private_key_passphrase = match passphrase {
-            Some(passphrase) => Some(passphrase.as_ref().to_string()),
-            None => None,
-        };
+    /// Basic authentication using password.
+    pub fn auth_basic<T: AsRef<str>>(mut self, user: T, password: T) -> Self {
+        self.auth_basic = Some(SftpAuthBasic {
+            user: user.as_ref().to_string(),
+            password: password.as_ref().to_string()
+        });
         self
     }
 
     /// Sets the remote directory for the user on the sftp server.
-    pub fn remote_path<T: AsRef<Path>>(mut self, remote_path: T) -> Self {
-        self.remote_path = remote_path.as_ref().to_path_buf();
+    pub fn remote_dir<T: AsRef<Path>>(mut self, remote_dir: T) -> Self {
+        self.remote_dir = remote_dir.as_ref().to_path_buf();
         self
     }
 
-    /// Delete the remote file in sftp after successfully downloading it.
-    pub fn delete_after(mut self, delete_after: bool) -> Self {
-        self.delete_after = delete_after;
+    /// Delete the remote file in remote after successfully downloading it.
+    pub fn delete_after_download(mut self, delete: bool) -> Self {
+        self.delete_after_download = delete;
         self
     }
 
@@ -65,80 +55,96 @@ impl SftpReceiver {
         self
     }
 
-    /// Download files from the sftp server to the target local path.
-    /// 
-    /// Filters for files can be set with regex(), the default regex is: ^.+\.[^./\\]+$
-    pub async fn receive_once<T: AsRef<Path>>(self, target_local_path: T) -> tokio::io::Result<()> {
-        let local_path = target_local_path.as_ref();
-        if !local_path.try_exists()? {
-            return Err(Error::tokio_io(format!("The path '{:?}' does not exist!", &local_path)));
-        }
+    pub async fn receive_to_path<T: AsRef<Path>>(self, target_path: T) -> anyhow::Result<()> {
+        let sftp = self.connect_and_authenticate().await?;
+        tracing::debug!("connected to {}", &self.host);
 
-        log::trace!("connecting to {}", self.host);
-        let tcp = TokioTcpStream::connect(&self.host).await?;
-        let mut session = AsyncSession::new(tcp, SessionConfiguration::default())?;
-        session.handshake().await?;
-        log::trace!("connected to {}", self.host);
+        let entries = sftp.read_dir(self.remote_dir.to_str().unwrap()).await?;
 
-        if let Some(password) = self.auth.password {
-            session.userauth_password(&self.auth.user, &password).await?;
-        }
-        if let Some(private_key) = self.auth.private_key {
-            session.userauth_pubkey_file(&self.auth.user, None, &private_key, self.auth.private_key_passphrase.as_deref()).await?;
-        }
-
-        let remote_path = Path::new(&self.remote_path);
-        let sftp = session.sftp().await?;
-        let entries = sftp.readdir(remote_path).await?;
-
-        for (entry, metadata) in entries {
-            if metadata.is_dir() {
+        for entry in entries {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if !self.regex.is_match(&entry.file_name()) {
                 continue;
             }
 
-            let file_name = entry.file_name().unwrap().to_str().unwrap();
-            if self.regex.is_match(file_name) {
+            let remote_file_path = self.remote_dir.join(entry.file_name());
+            tracing::debug!("matched remote file at {:?}", remote_file_path);
+            let mut remote_file = sftp.open(remote_file_path.to_str().unwrap()).await?;
 
-                let remote_file_path = Path::new(&self.remote_path).join(file_name);
-                let remote_file = sftp.open(&remote_file_path).await?;
-                let local_file_path = local_path.join(file_name);
-                let local_file = OpenOptions::new().create(true).write(true).open(&local_file_path).await?;
+            let local_file_path = target_path.as_ref().join(entry.file_name());
+            let mut local_file = File::create(&local_file_path).await?;
 
-                let uuid = Uuid::new_v4().to_string();
-                log::trace!("[{}] download started to {:?}", uuid, local_file_path);
-
-                match Self::download_file(remote_file, local_file).await {
-                    Ok(_) => {
-                        log::trace!("[{}] download success", uuid);
-                        if self.delete_after {
-                            sftp.unlink(&remote_file_path).await?;
-                            log::trace!("[{}] source file deleted {:?}", uuid, remote_file_path);
-                        }
-                    },
-                    Err(err) => {
-                        log::error!("[{}] {:?}", uuid, err);
-                    },
+            let mut buffer = vec![0u8; 1024];
+            loop {
+                let bytes = remote_file.read(&mut buffer).await?;
+                if bytes == 0 {
+                    break;
                 }
+                local_file.write_all(&buffer[..bytes]).await?;
+            }
+            tracing::debug!("remote file {:?} downloaded to {:?}", &remote_file_path, &local_file_path);
+
+            if self.delete_after_download {
+                sftp.remove_file(remote_file_path.to_str().unwrap()).await?;
+                tracing::debug!("remote file deleted {:?}", &remote_file_path);
             }
         }
 
-        log::trace!("complete");
+        tracing::debug!("complete");
         Ok(())
     }
 
-    async fn download_file(mut remote_file: AsyncFile<TcpStream>, mut local_file: File) -> tokio::io::Result<()> {
-        let mut buffer = vec![0u8; 1024 * 1024];
-        loop {
-            let bytes = remote_file.read(&mut buffer).await?;
-            if bytes == 0 {
-                break;
+    pub async fn receive_to_bytes(self) -> anyhow::Result<HashMap<String, Bytes>> {
+        let sftp = self.connect_and_authenticate().await?;
+        tracing::debug!("connected to {}", &self.host);
+
+        let mut files = HashMap::<String, Bytes>::new();
+        let entries = sftp.read_dir(self.remote_dir.to_str().unwrap()).await?;
+
+        for entry in entries {
+            if !entry.file_type().is_file() {
+                continue;
             }
-            local_file.write_all(&buffer[..bytes]).await?;
+            if !self.regex.is_match(&entry.file_name()) {
+                continue;
+            }
+
+            let remote_file_path = self.remote_dir.join(entry.file_name());
+            tracing::debug!("matched remote file at {:?}", remote_file_path);
+            let mut remote_file = sftp.open(remote_file_path.to_str().unwrap()).await?;
+
+            let mut buffer = Vec::new();
+            remote_file.read_to_end(&mut buffer).await?;
+            files.insert(entry.file_name(), Bytes::from(buffer));
+            tracing::debug!("remote file {:?} downloaded", &remote_file_path);
+
+            if self.delete_after_download {
+                sftp.remove_file(remote_file_path.to_str().unwrap()).await?;
+                tracing::debug!("remote file deleted {:?}", &remote_file_path);
+            }
         }
 
-        local_file.flush().await?;
-        remote_file.close().await?;
+        tracing::debug!("complete");
+        Ok(files)
+    }
 
-        Ok(())
+    async fn connect_and_authenticate(&self) -> anyhow::Result<SftpSession> {
+        let config = russh::client::Config::default();
+        let ssh = SshClient {};
+
+        tracing::debug!("connecting to {}", &self.host);
+        let mut session = russh::client::connect(Arc::new(config), &self.host, ssh).await?;
+        
+        if let Some(auth) = &self.auth_basic {
+            session.authenticate_password(&auth.user, &auth.password).await?;
+        }
+
+        let channel = session.channel_open_session().await?;
+        channel.request_subsystem(true, "sftp").await?;
+        let sftp = SftpSession::new(channel.into_stream()).await?;
+
+        Ok(sftp)
     }
 }
