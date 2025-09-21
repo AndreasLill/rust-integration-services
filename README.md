@@ -15,14 +15,14 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.3.5", features = ["full"] }
+rust-integration-services = { version = "0.3.6", features = ["full"] }
 ```
 
 **With select features**
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.3.5", features = ["file", "schedule", "sftp", "http"] }
+rust-integration-services = { version = "0.3.6", features = ["file", "schedule", "sftp", "http"] }
 ```
 
 ## Features
@@ -44,10 +44,9 @@ It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-pe
 ### Sftp
 [Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/sftp/examples.md)
 
-Using SFTP requires `openssl` to be installed on the system.  
-Make sure you also have the development packages of openssl installed.
-For example, `libssl-dev` on Ubuntu or `openssl-devel` on Fedora.
+The sftp module is built on top of the low-level [`russh`](https://crates.io/crates/russh) and [`russh-sftp`](https://crates.io/crates/russh-sftp) libraries.  
 
+These crates provide direct access to the SSH transport layer and the SFTP protocol, giving full control over connection management, authentication, and file transfer operations.  
 
 ### Schedule
 [Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/schedule/examples.md)

@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use russh::keys::HashAlg;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}};
 
 use crate::sftp::{sftp, sftp_authentication::SftpAuthentication, sftp_auth_basic::SftpAuthBasic, sftp_auth_key::SftpAuthKey};
@@ -34,11 +33,10 @@ impl SftpSender {
     /// Ed25519 = None
     /// ECDSA = None
     /// RSA = Some(HashAlg::Sha256) or Some(HashAlg::Sha512)
-    pub fn auth_key<T: AsRef<str>>(mut self, user: T, key_path: T, hash_alg: Option<HashAlg>, passphrase: Option<String>) -> Self {
+    pub fn auth_key<T: AsRef<str>>(mut self, user: T, key_path: T, passphrase: Option<String>) -> Self {
         self.authentication.key = Some(SftpAuthKey {
             user: user.as_ref().to_string(),
             key_path: PathBuf::from(key_path.as_ref()),
-            hash_alg,
             passphrase
         });
         self

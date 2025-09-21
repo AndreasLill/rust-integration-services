@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use russh::keys::PrivateKeyWithHashAlg;
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
 use russh_sftp::client::SftpSession;
 
 use crate::sftp::{sftp_authentication::SftpAuthentication, ssh_client::SshClient};
@@ -18,7 +18,12 @@ pub async fn connect_and_authenticate(host: &String, auth: &SftpAuthentication) 
 
     if let Some(auth) = &auth.key {
         let key = russh::keys::load_secret_key(&auth.key_path, auth.passphrase.as_deref())?;
-        let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), auth.hash_alg);
+        let hash_alg = match &key.algorithm() {
+            russh::keys::Algorithm::Rsa { .. } => Some(HashAlg::Sha256),
+            _ => None,
+        };
+
+        let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
         session.authenticate_publickey(&auth.user, key_with_alg).await?;
         tracing::debug!("authenticated using key");
     }
