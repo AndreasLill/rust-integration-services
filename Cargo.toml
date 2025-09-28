@@ -26,6 +26,7 @@ hyper-rustls = { version = "0.27.7", optional = true }
 http-body-util = { version = "0.1", optional = true }
 matchit = { version = "0.8.6", optional = true }
 rustls = { version = "0.23.32", optional = true }
+rustls-native-certs = { version = "0.8.1", optional = true }
 tokio-rustls = { version = "0.26.4", optional = true } 
 webpki-roots = { version = "1.0.2", optional = true }
 rustls-pemfile = { version = "2.2.0", optional = true }
@@ -42,7 +43,7 @@ tracing-subscriber = "0.3.20"
 [features]
 default = []
 full = ["file", "schedule", "sftp", "http", "smtp"]
-http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "matchit", "bytes"]
+http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "rustls-native-certs", "matchit", "bytes"]
 file = ["regex"]
 schedule = ["chrono"]
 sftp = ["russh", "russh-sftp", "regex", "bytes"]

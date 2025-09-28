@@ -46,27 +46,9 @@ HttpReceiver::new("127.0.0.1:8080")
 # HttpSender
 HttpSender will automatically use a secure TLS connection if the scheme is `https` and ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
 
-Send a GET request to `http://127.0.0.1:8080`.
-``` rust
-let response = HttpSender::new("http://127.0.0.1:8080")
-.send(HttpRequest::get())
-.await
-.unwrap();
-```
-
-Send a GET request using TLS to `https://127.0.0.1:8080`.
+Send a GET request to `https://127.0.0.1:8080`.
 ``` rust
 let response = HttpSender::new("https://127.0.0.1:8080")
-.send(HttpRequest::get())
-.await
-.unwrap();
-```
-
-Send a GET request using TLS and add a custom Root CA to `https://127.0.0.1:8080`.
-``` rust
-let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
-let response = HttpSender::new("https://127.0.0.1:8080")
-.add_root_ca(root_ca_path)
 .send(HttpRequest::get())
 .await
 .unwrap();

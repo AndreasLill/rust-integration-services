@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use http_body_util::{BodyExt, Full};
 use hyper::{body::{Bytes, Incoming}, header::{HeaderName, HeaderValue}, Request, Response, Uri, Version};
@@ -6,9 +6,10 @@ use hyper_util::rt::TokioIo;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
+use tracing::warn;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
+use crate::http::{http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
 
 pub struct HttpSender {
     url: String,
@@ -20,13 +21,19 @@ pub struct HttpSender {
 impl HttpSender {
     /// Creates a new `HttpSender` instance with a default set of trusted root CAs.
     /// 
-    /// By default, the client trusts the Mozilla root certificates provided by the
-    /// [`webpki_roots`](https://docs.rs/webpki-roots) crate to validate server certificates.
+    /// By default, the client trusts the system native root certs in addition to Mozilla root certificates provided by the
+    /// [`webpki_roots`](https://docs.rs/webpki-roots) crate.
     /// 
-    /// To add a custom Certificate Authority (CA), use [`add_root_ca()`] before sending the request.
     pub fn new<T: AsRef<str>>(url: T) -> Self {
         let mut root_cert_store = RootCertStore::empty();
         root_cert_store.extend(TLS_SERVER_ROOTS.iter().cloned());
+        let native_certs = rustls_native_certs::load_native_certs();
+        for cert in native_certs.certs {
+            root_cert_store.add(cert).unwrap();
+        }
+        for error in native_certs.errors {
+            warn!("failed to load native cert: {:?}", error);
+        }
 
         HttpSender {
             url: url.as_ref().to_string(),
@@ -34,16 +41,6 @@ impl HttpSender {
             http1_only: false,
             http2_only: false,
         }
-    }
-
-    /// Add a custom root certificate authority (CA) in PEM format for verifying TLS connections.
-    pub fn add_root_ca<T: AsRef<Path>>(mut self, root_ca_path: T) -> Self {
-        let certs = Crypto::pem_load_certs(root_ca_path).expect("Could not load Root CA");
-        
-        for cert in certs {
-            self.root_cert_store.add(cert).expect("Could not add root CA to root store");
-        }
-        self
     }
 
     /// Force the use of HTTP/1.1.

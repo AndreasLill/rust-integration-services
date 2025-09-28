@@ -49,6 +49,7 @@ mod test {
     /// mkcert localhost 127.0.0.1 ::1
     #[tokio::test(start_paused = true)]
     async fn http_receiver_tls() {
+        tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
         assert!(home_dir().is_some());
         tokio::spawn(async move {
             let server_cert_path = home_dir().unwrap().join(".config/rust-integration-services/certs/localhost+2.pem");
@@ -63,9 +64,7 @@ mod test {
         });
 
         tokio::time::advance(Duration::from_millis(1000)).await;
-        let root_ca_path = home_dir().unwrap().join(".local/share/mkcert/rootCA.pem");
-        let client = HttpSender::new("https://127.0.0.1:8080").add_root_ca(root_ca_path);
-        let result = client.send(HttpRequest::get()).await;
+        let result = HttpSender::new("https://127.0.0.1:8080").send(HttpRequest::get()).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status.code(), 200);
