@@ -8,3 +8,5 @@ pub mod file;
 pub mod schedule;
 #[cfg(feature = "sftp")]
 pub mod sftp;
+#[cfg(feature = "smtp")]
+pub mod smtp;

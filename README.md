@@ -15,14 +15,14 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.3.6", features = ["full"] }
+rust-integration-services = { version = "0.4.0", features = ["full"] }
 ```
 
 **With select features**
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.3.6", features = ["file", "schedule", "sftp", "http"] }
+rust-integration-services = { version = "0.4.0", features = ["file", "schedule", "sftp", "http", "smtp"] }
 ```
 
 ## Features
@@ -36,7 +36,7 @@ The file module focus on the local file system and is useful for polling files i
 ### Http
 [Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/http/examples.md)
 
-The http module is built on top of the fast and reliable [`hyper`](https://crates.io/crates/hyper) HTTP library, and routing is handled using [`matchit`](https://crates.io/crates/matchit) url router library.
+The http module is built on top of the fast and reliable [`hyper`](https://crates.io/crates/hyper) crate, and routing is handled using [`matchit`](https://crates.io/crates/matchit) crate.
 
 It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-performance HTTP communication with automatic protocol negotiation via ALPN (Application-Layer Protocol Negotiation) with dynamic routing for REST.
 
@@ -44,9 +44,15 @@ It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-pe
 ### Sftp
 [Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/sftp/examples.md)
 
-The sftp module is built on top of the low-level [`russh`](https://crates.io/crates/russh) and [`russh-sftp`](https://crates.io/crates/russh-sftp) libraries.  
+The sftp module is built on top of the low-level [`russh`](https://crates.io/crates/russh) and [`russh-sftp`](https://crates.io/crates/russh-sftp) crates.  
 
 These crates provide direct access to the SSH transport layer and the SFTP protocol, giving full control over connection management, authentication, and file transfer operations.  
+
+### Smtp
+
+The SMTP module is built on top of the reliable [`lettre`](https://crates.io/crates/lettre) crate.
+
+`lettre` provides an asynchronous, rust-native SMTP support for secure connections via TLS.
 
 ### Schedule
 [Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/schedule/examples.md)
