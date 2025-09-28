@@ -78,8 +78,14 @@ impl HttpReceiver {
         tracing::trace!("started on {}", self.host);
         loop {
             tokio::select! {
-                _ = sigterm.recv() => break,
-                _ = sigint.recv() => break,
+                _ = sigterm.recv() => {
+                    drop(listener);
+                    break;
+                },
+                _ = sigint.recv() => {
+                    drop(listener);
+                    break;
+                },
                 result = listener.accept() => {
                     let uuid = Arc::new(Uuid::new_v4().to_string());
                     let tls_acceptor = tls_acceptor.clone();
