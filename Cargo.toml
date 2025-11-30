@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -16,7 +16,7 @@ path = "src/lib.rs"
 tokio = { version = "1.47.1", features = ["full"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 futures = "0.3.31"
-tracing = "0.1.41"
+tracing = "0.1.43"
 anyhow = "1.0.100"
 
 bytes = { version = "1.10.1", optional = true }
@@ -35,16 +35,20 @@ chrono = { version = "0.4.42", optional = true }
 russh = { version = "0.54.4", optional = true }
 russh-sftp =  { version = "2.1.1", optional = true }
 lettre = { version = "0.11.18", optional = true, default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
+aws-sdk-s3 = { version = "1.111.0", optional = true }
+aws-config = { version = "1.8.11", optional = true }
+url = { version = "2.5.7", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
-tracing-subscriber = "0.3.20"
+tracing-subscriber = "0.3.22"
 
 [features]
 default = []
-full = ["file", "schedule", "sftp", "http", "smtp"]
+full = ["file", "schedule", "sftp", "http", "smtp", "s3"]
 http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pemfile", "rustls-native-certs", "matchit", "bytes"]
 file = ["regex"]
 schedule = ["chrono"]
 sftp = ["russh", "russh-sftp", "regex", "bytes"]
 smtp = ["lettre"]
+s3 = ["aws-sdk-s3", "aws-config", "url", "regex", "bytes"]
