@@ -1,8 +1,8 @@
 use aws_config::{BehaviorVersion, Region, SdkConfig};
-use aws_sdk_s3::{Client, config::Credentials};
+use aws_sdk_s3::{Client, config::{Credentials, SharedCredentialsProvider}};
 use bytes::Bytes;
 
-use crate::s3::{s3_auth::S3Auth, s3_sender_config::S3SenderConfig};
+use crate::s3::{s3_sender_config::S3SenderConfig};
 
 pub struct S3Sender {
     config: S3SenderConfig,
@@ -22,18 +22,17 @@ impl S3Sender {
             return self.sdk_config.as_ref().unwrap();
         }
 
+        let creds = Credentials::new(self.config.access_key().to_owned(), self.config.secret_key().to_owned(), None, None, "static");
+        let provider = SharedCredentialsProvider::new(creds);
+        let region = Region::new(self.config.region().to_owned());
         let mut sdk_config = aws_config::defaults(BehaviorVersion::latest());
 
         if let Some(endpoint) = self.config.endpoint() {
             sdk_config = sdk_config.endpoint_url(endpoint.as_str());
         }
 
-        if let S3Auth::Basic { user, password } = self.config.auth() {
-            let creds = Credentials::new(user.to_owned(), password.to_owned(), None, None, "static");
-            sdk_config = sdk_config.credentials_provider(creds);
-        }
-
-        let sdk_config = sdk_config.region(Region::new(self.config.region().to_owned()))
+        let sdk_config = sdk_config.region(region)
+            .credentials_provider(provider)
             .load()
             .await;
 

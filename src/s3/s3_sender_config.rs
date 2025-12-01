@@ -1,12 +1,11 @@
 use url::Url;
 
-use crate::s3::s3_auth::S3Auth;
-
 pub struct S3SenderConfig {
     endpoint: Option<Url>,
     bucket: String,
     region: String,
-    auth: S3Auth
+    access_key: String,
+    secret_key: String,
 }
 
 impl S3SenderConfig {
@@ -15,7 +14,8 @@ impl S3SenderConfig {
             endpoint: None,
             bucket: None,
             region: None,
-            auth: None,
+            access_key: None,
+            secret_key: None,
         }
     }
 
@@ -31,8 +31,12 @@ impl S3SenderConfig {
         &self.region
     }
 
-    pub fn auth(&self) -> &S3Auth {
-        &self.auth
+    pub fn access_key(&self) -> &str {
+        &self.access_key
+    }
+
+    pub fn secret_key(&self) -> &str {
+        &self.secret_key
     }
 }
 
@@ -40,7 +44,8 @@ pub struct S3SenderConfigBuilder {
     endpoint: Option<String>,
     bucket: Option<String>,
     region: Option<String>,
-    auth: Option<S3Auth>
+    access_key: Option<String>,
+    secret_key: Option<String>,
 }
 
 impl S3SenderConfigBuilder {
@@ -58,7 +63,8 @@ impl S3SenderConfigBuilder {
             endpoint: endpoint_url,
             bucket: self.bucket.unwrap(),
             region: self.region.unwrap_or(String::from("auto")),
-            auth: self.auth.unwrap_or(S3Auth::None)
+            access_key: self.access_key.unwrap_or(String::from("")),
+            secret_key: self.secret_key.unwrap_or(String::from("")),
         })
     }
 
@@ -86,9 +92,17 @@ impl S3SenderConfigBuilder {
 
     /// **Optional**
     /// 
-    /// Default: `S3Auth::None`
-    pub fn auth(mut self, auth: S3Auth) -> Self {
-        self.auth = Some(auth);
+    /// Default: empty string
+    pub fn access_key<S: AsRef<str>>(mut self, access_key: S) -> Self {
+        self.access_key = Some(access_key.as_ref().to_owned());
+        self
+    }
+
+    /// **Optional**
+    /// 
+    /// Default: empty string
+    pub fn secret_key<S: AsRef<str>>(mut self, secret_key: S) -> Self {
+        self.secret_key = Some(secret_key.as_ref().to_owned());
         self
     }
 }
