@@ -13,12 +13,12 @@ keywords = ["integration"]
 path = "src/lib.rs"
 
 [dependencies]
-tokio = { version = "1.48.0", features = ["full"] }
-uuid = { version = "1.19.0", features = ["v4"] }
 futures = "0.3.31"
 tracing = "0.1.43"
 anyhow = "1.0.100"
 
+tokio = { version = "1.48.0", optional = true, features = ["full"] }
+uuid = { version = "1.19.0", optional = true, features = ["v4"] }
 bytes = { version = "1.11.0", optional = true }
 hyper = { version = "1.8.1", optional = true, features = ["full"] }
 hyper-util = { version = "0.1.19", optional = true, features = ["full"] }
@@ -46,9 +46,9 @@ tracing-subscriber = "0.3.22"
 [features]
 default = []
 full = ["file", "schedule", "sftp", "http", "smtp", "s3"]
-http = ["hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pki-types", "rustls-native-certs", "matchit", "bytes"]
-file = ["regex"]
-schedule = ["chrono"]
-sftp = ["russh", "russh-sftp", "regex", "bytes"]
-smtp = ["lettre"]
-s3 = ["aws-sdk-s3", "aws-config", "url", "regex", "bytes"]
+http = ["tokio", "uuid", "hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pki-types", "rustls-native-certs", "matchit", "bytes"]
+file = ["tokio", "uuid", "regex"]
+schedule = ["tokio", "uuid", "chrono"]
+sftp = ["tokio", "russh", "russh-sftp", "regex", "bytes"]
+smtp = ["tokio", "lettre"]
+s3 = ["tokio", "aws-sdk-s3", "aws-config", "url", "regex", "bytes"]
