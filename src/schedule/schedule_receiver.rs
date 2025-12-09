@@ -72,14 +72,13 @@ impl ScheduleReceiver {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
-        tracing::info!("started, next run at {:?}", self.next_run);
+        tracing::trace!("started, next run at {:?}", self.next_run);
         receiver_join_set.spawn(async move {
             loop {
                 let now = OffsetDateTime::now_utc();
                 if self.next_run > now {
-                    tracing::info!(?now);
                     let duration = self.next_run - now;
-                    tracing::info!(?duration);
+                    tracing::trace!("sleep: {:?}", duration);
                     sleep(Self::to_std_duration(duration)).await;
                 }
                 
