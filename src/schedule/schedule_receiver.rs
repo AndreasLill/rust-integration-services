@@ -1,7 +1,7 @@
 use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveTime, Utc};
 use futures::FutureExt;
+use time::{Date, OffsetDateTime, Time, Duration};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ type TriggerCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + S
 
 pub struct ScheduleReceiver {
     interval: ScheduleInterval,
-    next_run: DateTime<Utc>,
+    next_run: OffsetDateTime,
     callback_trigger: TriggerCallback,
 }
 
@@ -19,7 +19,7 @@ impl ScheduleReceiver {
     pub fn new() -> Self {
         ScheduleReceiver {
             interval: ScheduleInterval::None,
-            next_run: Utc::now(),
+            next_run: OffsetDateTime::now_utc(),
             callback_trigger: Arc::new(|_| Box::pin(async {})),
         }
     }
@@ -29,11 +29,10 @@ impl ScheduleReceiver {
     /// If the provided date is in the past, the scheduler will calculate the next valid future run based on the defined interval.
     /// 
     /// Note: Scheduler is using `UTC: Coordinated Universal Time` to avoid daylight saving problems.
-    pub fn start_date(mut self, year: i32, month: u32, day: u32) -> Self {
-        let naive_date = NaiveDate::from_ymd_opt(year, month, day).expect("Not a valid date.");
-        let naive_time = self.next_run.time();
-        let naive_dt = naive_date.and_time(naive_time);
-        self.next_run = DateTime::from_naive_utc_and_offset(naive_dt, Utc);
+    pub fn start_date(mut self, year: i32, month: u8, day: u8) -> Self {
+        let date = Date::from_calendar_date(year, month.try_into().unwrap(), day).expect("Not a valid date.");
+        let time = self.next_run.time();
+        self.next_run = date.with_time(time).assume_utc();
         self
     }
     
@@ -42,11 +41,10 @@ impl ScheduleReceiver {
     /// If the provided time is in the past, the scheduler will calculate the next valid future run based on the defined interval.
     /// 
     /// Note: Scheduler is using `UTC: Coordinated Universal Time` to avoid daylight saving problems.
-    pub fn start_time(mut self, hour: u32, minute: u32, second: u32) -> Self {
-        let naive_time = NaiveTime::from_hms_opt(hour, minute, second).expect("Not a valid time.");
-        let naive_date = self.next_run.date_naive();
-        let naive_dt = naive_date.and_time(naive_time);
-        self.next_run = DateTime::from_naive_utc_and_offset(naive_dt, Utc);
+    pub fn start_time(mut self, hour: u8, minute: u8, second: u8) -> Self {
+        let time = Time::from_hms(hour, minute, second).expect("Not a valid time.");
+        let date = self.next_run.date();
+        self.next_run = date.with_time(time).assume_utc();
         self
     }
     
@@ -70,18 +68,19 @@ impl ScheduleReceiver {
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
 
-        let now_timestamp = Utc::now().timestamp();
-        let next_run_timestamp = self.next_run.timestamp();
-        if next_run_timestamp < now_timestamp {
+        if self.next_run < OffsetDateTime::now_utc() {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
-        tracing::trace!("started, next run at {:?}", self.next_run);
+        tracing::info!("started, next run at {:?}", self.next_run);
         receiver_join_set.spawn(async move {
             loop {
-                let now = Utc::now();
-                if let Ok(duration) = (self.next_run - now).to_std() {
-                    sleep(duration).await;
+                let now = OffsetDateTime::now_utc();
+                if self.next_run > now {
+                    tracing::info!(?now);
+                    let duration = self.next_run - now;
+                    tracing::info!(?duration);
+                    sleep(Self::to_std_duration(duration)).await;
                 }
                 
                 if self.interval != ScheduleInterval::None {
@@ -126,15 +125,15 @@ impl ScheduleReceiver {
         tracing::trace!("shut down complete");
     }
 
-    async fn calculate_next_run(next_run: DateTime<Utc>, interval: ScheduleInterval) -> DateTime<Utc> {
-        let now = Utc::now();
+    async fn calculate_next_run(next_run: OffsetDateTime, interval: ScheduleInterval) -> OffsetDateTime {
+        let now = OffsetDateTime::now_utc();
 
         let interval_duration = match interval {
             ScheduleInterval::None => return next_run,
-            ScheduleInterval::Seconds(seconds) => ChronoDuration::seconds(seconds),
-            ScheduleInterval::Minutes(minutes) => ChronoDuration::minutes(minutes),
-            ScheduleInterval::Hours(hours) => ChronoDuration::hours(hours),
-            ScheduleInterval::Days(days) => ChronoDuration::days(days),
+            ScheduleInterval::Seconds(seconds) => Duration::seconds(seconds),
+            ScheduleInterval::Minutes(minutes) => Duration::minutes(minutes),
+            ScheduleInterval::Hours(hours) => Duration::hours(hours),
+            ScheduleInterval::Days(days) => Duration::days(days),
         };
 
         let mut calculated_next_run = next_run.clone();
@@ -143,5 +142,13 @@ impl ScheduleReceiver {
         }
 
         calculated_next_run
+    }
+
+    fn to_std_duration(duration: Duration) -> std::time::Duration {
+        if duration.is_negative() {
+            std::time::Duration::from_millis(0)
+        } else {
+            std::time::Duration::new(duration.whole_seconds() as u64, duration.subsec_nanoseconds().try_into().unwrap())
+        }
     }
 }
