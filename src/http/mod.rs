@@ -52,8 +52,8 @@ mod test {
         tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
         assert!(home_dir().is_some());
         tokio::spawn(async move {
-            let server_cert_path = home_dir().unwrap().join(".config/rust-integration-services/certs/localhost+2.pem");
-            let server_key_path = home_dir().unwrap().join(".config/rust-integration-services/certs/localhost+2-key.pem");
+            let server_cert_path = home_dir().unwrap().join("localhost+2.pem");
+            let server_key_path = home_dir().unwrap().join("localhost+2-key.pem");
             HttpReceiver::new("127.0.0.1:8080")
             .tls(server_cert_path, server_key_path)
             .route("/", async move |_uuid, _request| {
@@ -65,8 +65,11 @@ mod test {
 
         tokio::time::advance(Duration::from_millis(1000)).await;
         let result = HttpSender::new("https://127.0.0.1:8080").send(HttpRequest::get()).await;
+        tracing::info!(?result);
         assert!(result.is_ok());
+        
         let response = result.unwrap();
+        tracing::info!(?response);
         assert_eq!(response.status.code(), 200);
     }
 

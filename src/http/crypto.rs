@@ -1,19 +1,30 @@
 use std::path::Path;
 
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 
 pub struct Crypto;
 
 impl Crypto {
-    pub fn pem_load_certs<T: AsRef<Path>>(file_name: T) -> std::io::Result<Vec<CertificateDer<'static>>> {
-        let cert_file = std::fs::File::open(file_name)?;
-        let mut reader = std::io::BufReader::new(cert_file);
-        rustls_pemfile::certs(&mut reader).collect()
+    pub fn pem_load_certs(file_name: impl AsRef<Path>) -> anyhow::Result<Vec<CertificateDer<'static>>> {
+        let certs = CertificateDer::pem_file_iter(file_name.as_ref())?
+        .map(|res| {
+            let cert = res?;
+            Ok(cert.into_owned())
+        })
+        .collect::<Result<Vec<CertificateDer<'static>>, rustls_pki_types::pem::Error>>()?;
+
+        Ok(certs)
     }
 
-    pub fn pem_load_private_key<T: AsRef<Path>>(file_name: T) -> std::io::Result<PrivateKeyDer<'static>> {
-        let key_file = std::fs::File::open(file_name)?;
-        let mut reader = std::io::BufReader::new(key_file);
-        rustls_pemfile::private_key(&mut reader).map(|key| key.unwrap())
+    
+    pub fn pem_load_private_key(file_name: impl AsRef<Path>) -> anyhow::Result<PrivateKeyDer<'static>> {
+        let keys: Vec<PrivateKeyDer<'static>> = PrivateKeyDer::pem_file_iter(file_name.as_ref())?
+        .map(|res| {
+            let key = res?;
+            Ok(key.clone_key())
+        })
+        .collect::<Result<_, rustls_pki_types::pem::Error>>()?;
+
+        keys.into_iter().next().ok_or_else(|| anyhow::anyhow!("no private keys found"))
     }
 }

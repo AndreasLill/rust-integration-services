@@ -43,6 +43,11 @@ impl HttpReceiver {
     fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> anyhow::Result<ServerConfig> {
         let certs = Crypto::pem_load_certs(cert_path)?;
         let key = Crypto::pem_load_private_key(key_path)?;
+
+        rustls::crypto::ring::default_provider().install_default().map_err(
+            |err| anyhow::anyhow!("Failed to install crypto provider {:?}", err)
+        )?;
+        
         let config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)?;
