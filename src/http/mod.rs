@@ -5,7 +5,13 @@ mod http_executor;
 #[cfg(feature = "http")]
 pub mod http_receiver;
 #[cfg(feature = "http")]
-pub mod http_sender;
+pub mod http_client;
+#[cfg(feature = "http")]
+pub mod http_client_config;
+#[cfg(feature = "http")]
+pub mod http_client_version;
+#[cfg(feature = "http")]
+pub mod http_client_request;
 #[cfg(feature = "http")]
 pub mod http_request;
 #[cfg(feature = "http")]

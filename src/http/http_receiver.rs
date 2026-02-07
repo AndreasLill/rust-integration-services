@@ -44,9 +44,10 @@ impl HttpReceiver {
         let certs = Crypto::pem_load_certs(cert_path)?;
         let key = Crypto::pem_load_private_key(key_path)?;
 
-        rustls::crypto::ring::default_provider().install_default().map_err(
+        /* rustls::crypto::ring::default_provider().install_default().map_err(
             |err| anyhow::anyhow!("Failed to install crypto provider {:?}", err)
-        )?;
+        )?; */
+        Crypto::install_crypto_provider()?;
         
         let config = ServerConfig::builder()
             .with_no_client_auth()

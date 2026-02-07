@@ -1,6 +1,8 @@
-use std::path::Path;
+use std::{path::Path, sync::Once};
 
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+
+static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
 
 pub struct Crypto;
 
@@ -26,5 +28,15 @@ impl Crypto {
         .collect::<Result<_, rustls_pki_types::pem::Error>>()?;
 
         keys.into_iter().next().ok_or_else(|| anyhow::anyhow!("no private keys found"))
+    }
+
+    pub fn install_crypto_provider() -> anyhow::Result<()> {
+        let mut result: anyhow::Result<()> = Ok(());
+        INSTALL_CRYPTO_PROVIDER.call_once(|| {
+            result = rustls::crypto::ring::default_provider()
+                .install_default()
+                .map_err(|e| anyhow::anyhow!("Failed to install crypto provider: {:?}", e));
+        });
+        result
     }
 }

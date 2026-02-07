@@ -1,5 +1,5 @@
 use std::{env::home_dir, time::Duration};
-use crate::http::{http_method::HttpMethod, http_receiver::HttpReceiver, http_request::HttpRequest, http_response::HttpResponse, http_sender::HttpSender, http_status::HttpStatus};
+use crate::http::{http_client::HttpClient, http_client_config::HttpClientConfig, http_method::HttpMethod, http_receiver::HttpReceiver, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
 
 #[tokio::test(start_paused = true)]
 async fn http_receiver() {
@@ -13,7 +13,7 @@ async fn http_receiver() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let result = HttpSender::new("http://127.0.0.1:8080").send(HttpRequest::get()).await;
+    let result = HttpClient::new(HttpClientConfig::default()).request(HttpRequest::get()).send("http://127.0.0.1:8080").await;
     assert!(result.is_ok());
     let response = result.unwrap();
     assert_eq!(response.status.code(), 200);
@@ -43,7 +43,7 @@ async fn http_receiver_tls() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let result = HttpSender::new("https://127.0.0.1:8080").send(HttpRequest::get()).await;
+    let result = HttpClient::new(HttpClientConfig::default()).request(HttpRequest::get()).send("https://127.0.0.1:8080").await;
     tracing::info!(?result);
     assert!(result.is_ok());
     
@@ -54,13 +54,13 @@ async fn http_receiver_tls() {
 
 #[tokio::test]
 async fn http_sender() {
-    let result = HttpSender::new("http://httpbin.org/get").send(HttpRequest::get()).await;
+    let result = HttpClient::new(HttpClientConfig::default()).request(HttpRequest::get()).send("http://httpbin.org/get").await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn http_sender_tls() {
-    let result = HttpSender::new("https://httpbin.org/get").send(HttpRequest::get()).await;
+    let result = HttpClient::new(HttpClientConfig::default()).request(HttpRequest::get()).send("https://httpbin.org/get").await;
     assert!(result.is_ok());
 }
 
