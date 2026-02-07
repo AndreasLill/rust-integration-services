@@ -14,12 +14,12 @@ path = "src/lib.rs"
 
 [dependencies]
 futures = "0.3.31"
-tracing = "0.1.43"
-anyhow = "1.0.100"
+tracing = "0.1.44"
+anyhow = "1.0.101"
 
-tokio = { version = "1.48.0", optional = true, features = ["full"] }
+tokio = { version = "1.49.0", optional = true, features = ["full"] }
 uuid = { version = "1.19.0", optional = true, features = ["v4"] }
-bytes = { version = "1.11.0", optional = true }
+bytes = { version = "1.11.1", optional = true }
 hyper = { version = "1.8.1", optional = true, features = ["full"] }
 hyper-util = { version = "0.1.19", optional = true, features = ["full"] }
 hyper-rustls = { version = "0.27.7", optional = true }
@@ -30,17 +30,17 @@ rustls-native-certs = { version = "0.8.2", optional = true }
 tokio-rustls = { version = "0.26.4", optional = true } 
 webpki-roots = { version = "1.0.4", optional = true }
 rustls-pki-types = { version = "1.13.1", optional = true }
-regex = { version = "1.11.3", optional = true }
+regex = { version = "1.12.3", optional = true }
 time = { version = "0.3.44", optional = true }
 russh = { version = "0.55.0", optional = true }
 russh-sftp =  { version = "2.1.1", optional = true }
 lettre = { version = "0.11.19", optional = true, default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
-aws-sdk-s3 = { version = "1.116.0", optional = true }
-aws-config = { version = "1.8.11", optional = true }
-url = { version = "2.5.7", optional = true }
+aws-sdk-s3 = { version = "1.122.0", optional = true }
+aws-config = { version = "1.8.13", optional = true }
+url = { version = "2.5.8", optional = true }
 
 [dev-dependencies]
-tokio-test = "0.4.4"
+tokio-test = "0.4.5"
 tracing-subscriber = "0.3.22"
 
 [features]

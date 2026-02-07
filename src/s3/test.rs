@@ -12,17 +12,17 @@ async fn client_test() {
     tracing::info!("{:?}", config);
     assert!(config.is_ok());
 
-    let mut client = S3Client::new(config.unwrap());
+    let client = S3Client::new(config.unwrap());
 
-    let result = client.put_object("test", "file_test.txt").body("test").send().await;
+    let result = client.bucket("test").put_object_bytes("file_test.txt", "text").await;
     tracing::info!("{:?}", result);
     assert!(result.is_ok());
 
-    let result = client.get_object("test", "file_test.txt").send().await;
+    let result = client.bucket("test").get_object_as_bytes("file_test.txt").await;
     tracing::info!("{:?}", result);
     assert!(result.is_ok());
 
-    let result = client.delete_object("test", "file_test.txt").send().await;
+    let result = client.bucket("test").delete_object("file_test.txt").await;
     tracing::info!("{:?}", result);
     assert!(result.is_ok());
 }

@@ -3,10 +3,10 @@ use std::sync::Arc;
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_s3::{Client, config::{Credentials, SharedCredentialsProvider}};
 
-use crate::s3::{s3_client_config::S3ClientConfig, s3_client_delete_object::S3ClientDeleteObject, s3_client_get_object::S3ClientGetObject, s3_client_put_object::S3ClientPutObject};
+use crate::s3::{s3_client_bucket::S3ClientBucket, s3_client_config::S3ClientConfig};
 
 pub struct S3Client {
-    client: Arc<Client>
+    client: Arc<Client>,
 }
 
 impl S3Client {
@@ -33,15 +33,7 @@ impl S3Client {
         Client::new(&sdk_config.build())
     }
 
-    pub fn put_object(&mut self, bucket: impl AsRef<str>, key: impl AsRef<str>) -> S3ClientPutObject {
-        S3ClientPutObject::new(self.client.clone(), bucket.as_ref(), key.as_ref())
-    }
-
-    pub fn get_object(&mut self, bucket: impl AsRef<str>, key: impl AsRef<str>) -> S3ClientGetObject {
-        S3ClientGetObject::new(self.client.clone(), bucket.as_ref(), key.as_ref())
-    }
-
-    pub fn delete_object(&mut self, bucket: impl AsRef<str>, key: impl AsRef<str>) -> S3ClientDeleteObject {
-        S3ClientDeleteObject::new(self.client.clone(), bucket.as_ref(), key.as_ref())
+    pub fn bucket(&self, bucket: impl AsRef<str>) -> S3ClientBucket {
+        S3ClientBucket::new(self.client.clone(), bucket.as_ref().to_string())
     }
 }
