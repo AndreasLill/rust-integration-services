@@ -42,6 +42,10 @@ impl HttpClient {
         }
     }
 
+    pub fn default() -> Self {
+        Self::new(HttpClientConfig::default())
+    }
+
     pub fn request(&self, request: HttpRequest) -> HttpClientRequest {
         HttpClientRequest::new(self.config.clone(), self.tls_config.clone(), request)
     }
