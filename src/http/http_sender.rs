@@ -115,6 +115,10 @@ impl HttpSender {
         let port = url.port_u16().unwrap_or(443);
         let domain = rustls::pki_types::ServerName::try_from(host.to_string())?;
         
+        rustls::crypto::ring::default_provider().install_default().map_err(
+            |err| anyhow::anyhow!("Failed to install crypto provider {:?}", err)
+        )?;
+        
         let mut tls_config = ClientConfig::builder()
         .with_root_certificates(self.root_cert_store.clone())
         .with_no_client_auth();
