@@ -11,14 +11,25 @@ async fn client_test() {
 
     tracing::info!("{:?}", config);
     assert!(config.is_ok());
-
     let client = S3Client::new(config.unwrap());
 
     let result = client.bucket("test").put_object_bytes("file_test.txt", "text").await;
     tracing::info!("{:?}", result);
     assert!(result.is_ok());
 
+    let result = client.bucket("test").get_object("file_test.txt", "/tmp").await;
+    tracing::info!("{:?}", result);
+    assert!(result.is_ok());
+
     let result = client.bucket("test").get_object_as_bytes("file_test.txt").await;
+    tracing::info!("{:?}", result);
+    assert!(result.is_ok());
+
+    let result = client.bucket("test").get_objects("/tmp").await;
+    tracing::info!("{:?}", result);
+    assert!(result.is_ok());
+
+    let result = client.bucket("test").get_objects_with_regex("/tmp", "^file_test.*$").await;
     tracing::info!("{:?}", result);
     assert!(result.is_ok());
 
