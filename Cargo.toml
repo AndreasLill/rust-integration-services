@@ -46,7 +46,7 @@ tracing-subscriber = "0.3.22"
 [features]
 default = []
 full = ["file", "schedule", "sftp", "http", "smtp", "s3"]
-http = ["tokio", "uuid", "hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pki-types", "rustls-native-certs", "matchit", "bytes"]
+http = ["tokio", "hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pki-types", "rustls-native-certs", "matchit", "bytes"]
 file = ["tokio", "uuid", "regex"]
 schedule = ["tokio", "uuid", "time"]
 sftp = ["tokio", "russh", "russh-sftp", "regex", "bytes"]

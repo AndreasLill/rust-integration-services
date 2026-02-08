@@ -3,7 +3,7 @@ mod crypto;
 #[cfg(feature = "http")]
 mod http_executor;
 #[cfg(feature = "http")]
-pub mod http_receiver;
+pub mod http_server;
 #[cfg(feature = "http")]
 pub mod http_client;
 #[cfg(feature = "http")]

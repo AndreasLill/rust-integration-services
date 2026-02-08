@@ -1,11 +1,11 @@
 use std::{env::home_dir, time::Duration};
-use crate::http::{http_client::HttpClient, http_method::HttpMethod, http_receiver::HttpReceiver, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
+use crate::http::{http_client::HttpClient, http_method::HttpMethod, http_server::HttpServer, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
 
 #[tokio::test(start_paused = true)]
 async fn http_receiver() {
     tokio::spawn(async move {
-        HttpReceiver::new("127.0.0.1:8080")
-        .route("/", async move |_uuid, _request| {
+        HttpServer::new("127.0.0.1:8080")
+        .route("/", async move |_request| {
             HttpResponse::ok()
         })
         .receive()
@@ -21,10 +21,7 @@ async fn http_receiver() {
 
 /// Create your own certs for testing.
 /// 
-/// sudo dnf install mkcert
-/// 
 /// mkcert -install
-/// 
 /// mkcert localhost 127.0.0.1 ::1
 #[tokio::test(start_paused = true)]
 async fn http_receiver_tls() {
@@ -33,9 +30,9 @@ async fn http_receiver_tls() {
     tokio::spawn(async move {
         let server_cert_path = home_dir().unwrap().join("localhost+2.pem");
         let server_key_path = home_dir().unwrap().join("localhost+2-key.pem");
-        HttpReceiver::new("127.0.0.1:8080")
+        HttpServer::new("127.0.0.1:8080")
         .tls(server_cert_path, server_key_path)
-        .route("/", async move |_uuid, _request| {
+        .route("/", async move |_request| {
             HttpResponse::ok()
         })
         .receive()
