@@ -22,7 +22,7 @@ rust-integration-services = { version = "0.4.1", features = ["full"] }
 ``` toml
 [dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.4.1", features = ["file", "schedule", "sftp", "http", "smtp", "s3"] }
+rust-integration-services = { version = "0.4.1", features = ["file", "scheduler", "sftp", "http", "smtp", "s3"] }
 ```
 
 ## Features
@@ -54,8 +54,8 @@ The SMTP module is built on top of the reliable [`lettre`](https://crates.io/cra
 
 `lettre` provides an asynchronous, rust-native SMTP support for secure connections via TLS.
 
-### Schedule
+### Scheduler
 [Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/schedule/examples.md)
 
-The schedule module assist in scheduling tasks over time, such as hourly, daily or weekly.  
+The scheduler module assist in scheduling tasks over time, such as hourly, daily or weekly.  
 During downtime or maintenance it calculates the next scheduled time automatically on resume.

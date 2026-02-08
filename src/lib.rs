@@ -6,8 +6,8 @@ mod common;
 pub mod http;
 #[cfg(feature = "file")]
 pub mod file;
-#[cfg(feature = "schedule")]
-pub mod schedule;
+#[cfg(feature = "scheduler")]
+pub mod scheduler;
 #[cfg(feature = "sftp")]
 pub mod sftp;
 #[cfg(feature = "smtp")]

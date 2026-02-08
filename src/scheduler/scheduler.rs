@@ -3,14 +3,13 @@ use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 use futures::FutureExt;
 use time::{Date, OffsetDateTime, Time, Duration};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
-use uuid::Uuid;
 
-use super::schedule_interval::ScheduleInterval;
+use super::scheduler_interval::SchedulerInterval;
 
-type TriggerCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type TriggerCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 pub struct ScheduleReceiver {
-    interval: ScheduleInterval,
+    interval: SchedulerInterval,
     next_run: OffsetDateTime,
     callback_trigger: TriggerCallback,
 }
@@ -18,9 +17,9 @@ pub struct ScheduleReceiver {
 impl ScheduleReceiver {
     pub fn new() -> Self {
         ScheduleReceiver {
-            interval: ScheduleInterval::None,
+            interval: SchedulerInterval::None,
             next_run: OffsetDateTime::now_utc(),
-            callback_trigger: Arc::new(|_| Box::pin(async {})),
+            callback_trigger: Arc::new(|| Box::pin(async {})),
         }
     }
     
@@ -49,17 +48,17 @@ impl ScheduleReceiver {
     }
     
     /// Sets the interval of how frequently the task should run.
-    pub fn interval(mut self, interval: ScheduleInterval) -> Self {
+    pub fn interval(mut self, interval: SchedulerInterval) -> Self {
         self.interval = interval;
         self
     }
 
     pub fn trigger<T, Fut>(mut self, callback: T) -> Self
     where
-        T: Fn(String) -> Fut + Send + Sync + 'static,
+        T: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.callback_trigger = Arc::new(move |uuid| Box::pin(callback(uuid)));
+        self.callback_trigger = Arc::new(move || Box::pin(callback()));
         self
     }
 
@@ -72,7 +71,7 @@ impl ScheduleReceiver {
             self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
         }
 
-        tracing::trace!("started, next run at {:?}", self.next_run);
+        tracing::trace!("Scheduler next run at {:?}", self.next_run);
         receiver_join_set.spawn(async move {
             loop {
                 let now = OffsetDateTime::now_utc();
@@ -82,24 +81,21 @@ impl ScheduleReceiver {
                     sleep(Self::to_std_duration(duration)).await;
                 }
                 
-                if self.interval != ScheduleInterval::None {
+                if self.interval != SchedulerInterval::None {
                     self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
                 }
 
-                let uuid = Uuid::new_v4().to_string();
-                tracing::trace!("[{}] trigger started", uuid);
-                let callback_fut = (self.callback_trigger)(uuid.clone());
+                let callback_fut = (self.callback_trigger)();
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 if let Err(err) = result {
-                    tracing::trace!("[{}] {:?}", uuid, err);
+                    tracing::trace!("{:?}", err);
                 }
-                tracing::trace!("[{}] trigger completed", uuid);
                 
-                if self.interval == ScheduleInterval::None {
+                if self.interval == SchedulerInterval::None {
                     break;
                 }
 
-                tracing::trace!("next run at {:?}", self.next_run);
+                tracing::trace!("Scheduler next run at {:?}", self.next_run);
             }
         });
 
@@ -124,15 +120,15 @@ impl ScheduleReceiver {
         tracing::trace!("shut down complete");
     }
 
-    async fn calculate_next_run(next_run: OffsetDateTime, interval: ScheduleInterval) -> OffsetDateTime {
+    async fn calculate_next_run(next_run: OffsetDateTime, interval: SchedulerInterval) -> OffsetDateTime {
         let now = OffsetDateTime::now_utc();
 
         let interval_duration = match interval {
-            ScheduleInterval::None => return next_run,
-            ScheduleInterval::Seconds(seconds) => Duration::seconds(seconds),
-            ScheduleInterval::Minutes(minutes) => Duration::minutes(minutes),
-            ScheduleInterval::Hours(hours) => Duration::hours(hours),
-            ScheduleInterval::Days(days) => Duration::days(days),
+            SchedulerInterval::None => return next_run,
+            SchedulerInterval::Seconds(seconds) => Duration::seconds(seconds),
+            SchedulerInterval::Minutes(minutes) => Duration::minutes(minutes),
+            SchedulerInterval::Hours(hours) => Duration::hours(hours),
+            SchedulerInterval::Days(days) => Duration::days(days),
         };
 
         let mut calculated_next_run = next_run.clone();

@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ScheduleInterval {
+pub enum SchedulerInterval {
     None,
     Seconds(i64),
     Minutes(i64),
