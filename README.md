@@ -14,35 +14,35 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 **All features**
 ``` toml
 [dependencies]
-tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.4.1", features = ["full"] }
+tokio = { version = "1.49.0", features = ["full"] }
+rust-integration-services = { version = "0.5.0", features = ["full"] }
 ```
 
 **With select features**
 ``` toml
 [dependencies]
-tokio = { version = "1.47.1", features = ["full"] }
-rust-integration-services = { version = "0.4.1", features = ["file", "scheduler", "sftp", "http", "smtp", "s3"] }
+tokio = { version = "1.49.0", features = ["full"] }
+rust-integration-services = { version = "0.5.0", features = ["file", "scheduler", "sftp", "http", "smtp", "s3"] }
 ```
 
 ## Features
 
 ### File
-[Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/file/examples.md)
 
 The file module focus on the local file system and is useful for polling files in a directory, copying, moving or writing to a file.
 
 
 ### Http
-[Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/http/examples.md)
 
 The http module is built on top of the fast and reliable [`hyper`](https://crates.io/crates/hyper) crate, and routing is handled using [`matchit`](https://crates.io/crates/matchit) crate.
 
 It supports both **HTTP/1.1** and **HTTP/2** protocols, enabling modern, high-performance HTTP communication with automatic protocol negotiation via ALPN (Application-Layer Protocol Negotiation) with dynamic routing for REST.
 
+### S3
+
+The S3 module is built on top of the [`AWS SDK`](https://crates.io/crates/aws-sdk-s3) and provides a simplified, easy-to-use client for interacting with Amazon S3 and other generic S3 services like minio. It abstracts common operations into a clean, versatile interface while retaining the flexibility of the underlying SDK.
 
 ### Sftp
-[Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/sftp/examples.md)
 
 The sftp module is built on top of the low-level [`russh`](https://crates.io/crates/russh) and [`russh-sftp`](https://crates.io/crates/russh-sftp) crates.  
 
@@ -55,7 +55,6 @@ The SMTP module is built on top of the reliable [`lettre`](https://crates.io/cra
 `lettre` provides an asynchronous, rust-native SMTP support for secure connections via TLS.
 
 ### Scheduler
-[Examples](https://github.com/AndreasLill/rust-integration-services/blob/master/src/schedule/examples.md)
 
 The scheduler module assist in scheduling tasks over time, such as hourly, daily or weekly.  
 During downtime or maintenance it calculates the next scheduled time automatically on resume.
