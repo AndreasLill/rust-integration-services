@@ -2,9 +2,8 @@ use std::{collections::{HashMap, HashSet}, panic::AssertUnwindSafe, path::{Path,
 use futures::FutureExt;
 use regex::Regex;
 use tokio::{signal::unix::{signal, SignalKind}, sync::Mutex, task::JoinSet};
-use uuid::Uuid;
 
-type FileCallback = Arc<dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type FileCallback = Arc<dyn Fn(PathBuf) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 pub struct FileReceiver {
     source_path: PathBuf,
@@ -22,7 +21,7 @@ impl FileReceiver {
     /// Callback that returns all file paths from the route using regular expression.
     pub fn route<T, Fut, S>(mut self, filter: S, callback: T) -> Self 
     where
-        T: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
+        T: Fn(PathBuf) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
         S: AsRef<str>,
     {
@@ -30,7 +29,7 @@ impl FileReceiver {
             panic!("Route already exists with filter {}", filter.as_ref())
         }
         let regex = Regex::new(filter.as_ref()).expect("Invalid Regex");
-        self.routes.push((regex, Arc::new(move |uuid, path| Box::pin(callback(uuid, path)))));
+        self.routes.push((regex, Arc::new(move |path| Box::pin(callback(path)))));
         self
     }
 
@@ -86,16 +85,15 @@ impl FileReceiver {
                                 let callback = Arc::clone(&callback);
                                 let lock_list = Arc::clone(&lock_list);
                                 let file_path = Arc::new(file_path.to_path_buf());
-                                let uuid = Uuid::new_v4().to_string();
                             
-                                tracing::trace!("[{}] file received at {:?}", uuid, file_path);
+                                tracing::trace!("File received at {:?}", file_path);
                                 receiver_join_set.spawn(async move {
-                                    let callback_fut = callback(uuid.to_string(), file_path.to_path_buf());
+                                    let callback_fut = callback(file_path.to_path_buf());
                                     let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
-                                    match result {
-                                        Ok(_) => tracing::trace!("[{}] file processed", uuid),
-                                        Err(err) => tracing::error!("[{}] {:?}", uuid, err),
-                                    };
+                                    
+                                    if let Err(err) = result {
+                                        tracing::error!("{:?}", err);
+                                    }
 
                                     let mut unlocked_list = lock_list.lock().await;
                                     unlocked_list.remove(&file_name);
