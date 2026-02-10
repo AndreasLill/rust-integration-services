@@ -8,7 +8,7 @@ use rustls::ClientConfig;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-use crate::http::{http_client_config::HttpClientConfig, http_client_version::HttpClientVersion, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
+use crate::http::{http_client_config::HttpClientConfig, http_client_version::HttpClientVersion, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse};
 
 pub struct HttpClientRequest {
     config: Arc<HttpClientConfig>,
@@ -176,8 +176,7 @@ impl HttpClientRequest {
 
     async fn build_http_response(res: Response<Incoming>) -> anyhow::Result<HttpResponse> {
         let (parts, body) = res.into_parts();
-        let mut response = HttpResponse::new();
-        response.status = HttpStatus::from_code(parts.status.as_u16())?;
+        let mut response = HttpResponse::new(parts.status.as_u16());
         
         for (key, value) in parts.headers {
             if let Some(key) = key {

@@ -2,75 +2,52 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 
-use crate::http::http_status::HttpStatus;
-
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
-    pub status: HttpStatus,
+    pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Bytes,
 }
 
 impl HttpResponse {
-    pub fn new() -> Self {
+    pub fn new(status: u16) -> Self {
         HttpResponse {
-            status: HttpStatus::Ok,
+            status,
             headers: HashMap::new(),
             body: Bytes::new(),
         }
     }
 
-    /// Creates a http response with status 200
     pub fn ok() -> Self {
-        HttpResponse::new().with_status(200)
-    }
-    
-    /// Creates a http response with status 302
-    pub fn found() -> Self {
-        HttpResponse::new().with_status(302)
-    }
-    
-    /// Creates a http response with status 400
-    pub fn bad_request() -> Self {
-        HttpResponse::new().with_status(400)
-    }
-    
-    /// Creates a http response with status 401
-    pub fn unauthorized() -> Self {
-        HttpResponse::new().with_status(401)
-    }
-    
-    /// Creates a http response with status 403
-    pub fn forbidden() -> Self {
-        HttpResponse::new().with_status(403)
-    }
-    
-    /// Creates a http response with status 404
-    pub fn not_found() -> Self {
-        HttpResponse::new().with_status(404)
-    }
-    
-    /// Creates a http response with status 500
-    pub fn internal_server_error() -> Self {
-        HttpResponse::new().with_status(500)
+        HttpResponse::new(200)
     }
 
-    /// Sets the HTTP response status code.
-    pub fn with_status(mut self, code: u16) -> Self {
-        self.status = HttpStatus::from_code(code).expect("Invalid HTTP status code");
-        self
+    pub fn bad_request() -> Self {
+        HttpResponse::new(400)
+    }
+
+    pub fn unauthorized() -> Self {
+        HttpResponse::new(401)
+    }
+
+    pub fn not_found() -> Self {
+        HttpResponse::new(404)
+    }
+
+    pub fn internal_server_error() -> Self {
+        HttpResponse::new(500)
     }
 
     /// Adds or updates a header in the HTTP response.
-    pub fn with_header<T: AsRef<str>>(mut self, key: T, value: T) -> Self {
+    pub fn header<T: AsRef<str>>(mut self, key: T, value: T) -> Self {
         self.headers.insert(key.as_ref().to_string(), value.as_ref().to_string());
         self
     }
 
     /// Sets the HTTP response body and automatically adds a `content-length` header.
-    pub fn with_body(mut self, body: &[u8]) -> Self {
-        self.body = Bytes::copy_from_slice(body);
-        self.headers.insert(String::from("content-length"), String::from(body.len().to_string()));
+    pub fn body(mut self, body: impl Into<Bytes>) -> Self {
+        self.body = body.into();
+        self.headers.insert(String::from("content-length"), String::from(&self.body.len().to_string()));
         self
     }
 }

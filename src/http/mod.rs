@@ -16,10 +16,6 @@ pub mod http_client_request;
 pub mod http_request;
 #[cfg(feature = "http")]
 pub mod http_response;
-#[cfg(feature = "http")]
-pub mod http_status;
-#[cfg(feature = "http")]
-pub mod http_method;
 
 #[cfg(feature = "http")]
 #[cfg(test)]

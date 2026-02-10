@@ -9,7 +9,7 @@ use rustls::ServerConfig;
 use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 
-use crate::http::{crypto::Crypto, http_executor::HttpExecutor, http_method::HttpMethod, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
+use crate::http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse};
 
 type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
@@ -216,8 +216,7 @@ impl HttpServer {
 
     async fn build_http_request(req: Request<Incoming>) -> anyhow::Result<HttpRequest> {
         let (parts, body) = req.into_parts();
-        let mut request = HttpRequest::new();
-        request.method = HttpMethod::from_str(parts.method.as_str())?;
+        let mut request = HttpRequest::new(parts.method.as_str().to_string());
         request.path = parts.uri.path().to_string();
         for (key, value) in parts.headers.iter() {
             if let Ok(value) = value.to_str() {
@@ -229,7 +228,7 @@ impl HttpServer {
     }
 
     async fn build_http_response(res: HttpResponse) -> anyhow::Result<Response<Full<Bytes>>> {
-        let mut response: Response<Full<Bytes>> = Response::builder().status(res.status.code()).body(res.body.into())?;
+        let mut response: Response<Full<Bytes>> = Response::builder().status(res.status).body(res.body.into())?;
         for (key, value) in res.headers.iter() {
             let header_name = HeaderName::from_bytes(key.as_bytes())?;
             let header_value = HeaderValue::from_bytes(&value.as_bytes())?;
@@ -239,6 +238,6 @@ impl HttpServer {
     }
 
     fn hyper_internal_server_error_response() -> Response<Full<Bytes>> {
-        Response::builder().status(HttpStatus::InternalServerError.code()).body(Full::new(Bytes::new())).unwrap()
+        Response::builder().status(500).body(Full::new(Bytes::new())).unwrap()
     }
 }

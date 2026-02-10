@@ -1,5 +1,5 @@
 use std::{env::home_dir, time::Duration};
-use crate::http::{http_client::HttpClient, http_method::HttpMethod, http_server::HttpServer, http_request::HttpRequest, http_response::HttpResponse, http_status::HttpStatus};
+use crate::http::{http_client::HttpClient, http_server::HttpServer, http_request::HttpRequest, http_response::HttpResponse};
 
 #[tokio::test(start_paused = true)]
 async fn http_receiver() {
@@ -16,7 +16,7 @@ async fn http_receiver() {
     let result = HttpClient::default().request(HttpRequest::get()).send("http://127.0.0.1:8080").await;
     assert!(result.is_ok());
     let response = result.unwrap();
-    assert_eq!(response.status.code(), 200);
+    assert_eq!(response.status, 200);
 }
 
 /// Create your own certs for testing.
@@ -46,7 +46,7 @@ async fn http_receiver_tls() {
     
     let response = result.unwrap();
     tracing::info!(?response);
-    assert_eq!(response.status.code(), 200);
+    assert_eq!(response.status, 200);
 }
 
 #[tokio::test]
@@ -62,23 +62,8 @@ async fn http_sender_tls() {
 }
 
 #[tokio::test]
-async fn http_status() {
-    assert_eq!(HttpStatus::Ok.code(), 200);
-    assert_eq!(HttpStatus::BadRequest.code(), 400);
-    assert_eq!(HttpStatus::NotFound.code(), 404);
-    assert_eq!(HttpStatus::InternalServerError.code(), 500);
-}
-
-#[tokio::test]
-async fn http_method() {
-    assert_eq!(HttpMethod::Get.as_str(), "GET");
-    assert_eq!(HttpMethod::Post.as_str(), "POST");
-    assert_eq!(HttpMethod::Delete.as_str(), "DELETE");
-}
-
-#[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::get().with_body("test".as_bytes()).with_header("test", "test");
+    let request = HttpRequest::get().body("test".as_bytes()).header("test", "test");
     assert_eq!(request.method.as_str(), "GET");
     assert_eq!(request.body, "test".as_bytes());
     assert_eq!(request.headers.get("test").unwrap(), "test");
@@ -86,9 +71,8 @@ async fn http_request() {
 
 #[tokio::test]
 async fn http_response() {
-    let response = HttpResponse::ok().with_body(b"test").with_header("test", "test");
-    assert_eq!(response.status.code(), 200);
-    assert_eq!(response.status.text(), "OK");
+    let response = HttpResponse::ok().body("test".as_bytes()).header("test", "test");
+    assert_eq!(response.status, 200);
     assert_eq!(response.body, "test".as_bytes());
     assert_eq!(response.headers.get("test").unwrap(), "test");
 }
