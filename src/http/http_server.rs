@@ -21,9 +21,9 @@ pub struct HttpServer {
 
 impl HttpServer {
     /// Creates a new `HttpServer` instance bound to the specified host address. Example: `127.0.0.1:8080`.
-    pub fn new<T: AsRef<str>>(host: T) -> Self {
+    pub fn new(host: impl Into<String>) -> Self {
         HttpServer {
-            host: host.as_ref().to_string(),
+            host: host.into(),
             router: Router::new(),
             tls_config: None,
         }
@@ -31,7 +31,7 @@ impl HttpServer {
 
     /// Enables TLS for incoming connections using the provided server certificate and private key in `.pem` format and
     /// configures the TLS context and sets supported ALPN protocols to allow HTTP/2 and HTTP/1.1.
-    pub fn tls<T: AsRef<Path>>(mut self, tls_server_cert_path: T, tls_server_key_path: T) -> Self {
+    pub fn tls(mut self, tls_server_cert_path: impl AsRef<Path>, tls_server_key_path: impl AsRef<Path>) -> Self {
         let mut tls_config = Self::create_tls_config(tls_server_cert_path, tls_server_key_path).expect("Failed to create TLS config");
         tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
@@ -39,13 +39,10 @@ impl HttpServer {
         self
     }
 
-    fn create_tls_config<T: AsRef<Path>>(cert_path: T, key_path: T) -> anyhow::Result<ServerConfig> {
+    fn create_tls_config(cert_path: impl AsRef<Path>, key_path: impl AsRef<Path>) -> anyhow::Result<ServerConfig> {
         let certs = Crypto::pem_load_certs(cert_path)?;
         let key = Crypto::pem_load_private_key(key_path)?;
 
-        /* rustls::crypto::ring::default_provider().install_default().map_err(
-            |err| anyhow::anyhow!("Failed to install crypto provider {:?}", err)
-        )?; */
         Crypto::install_crypto_provider()?;
         
         let config = ServerConfig::builder()
@@ -56,13 +53,12 @@ impl HttpServer {
     }
 
     /// Registers a route with a path, associating it with a handler callback.
-    pub fn route<T, Fut, S>(mut self, path: S, callback: T) -> Self
+    pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> Self
     where
         T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
-        S: AsRef<str>,
     {
-        self.router.insert(path.as_ref(), Arc::new(move |request| Box::pin(callback(request)))).expect(&format!("Invalid route path: {}", path.as_ref()));
+        self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
         self
     }
 

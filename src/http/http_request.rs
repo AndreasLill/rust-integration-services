@@ -12,9 +12,9 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    pub fn new(method: impl AsRef<str>) -> Self {
+    pub fn new(method: impl Into<String>) -> Self {
         HttpRequest {
-            method: method.as_ref().to_string(),
+            method: method.into(),
             path: String::from("/"),
             headers: HashMap::new(),
             params: HashMap::new(),
@@ -37,8 +37,8 @@ impl HttpRequest {
     }
 
     /// Adds or updates a header in the HTTP request.
-    pub fn header<T: AsRef<str>>(mut self, key: T, value: T) -> Self {
-        self.headers.insert(key.as_ref().to_string(), value.as_ref().to_string());
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(key.into(), value.into());
         self
     }
 }

@@ -39,8 +39,8 @@ impl HttpResponse {
     }
 
     /// Adds or updates a header in the HTTP response.
-    pub fn header<T: AsRef<str>>(mut self, key: T, value: T) -> Self {
-        self.headers.insert(key.as_ref().to_string(), value.as_ref().to_string());
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(key.into(), value.into());
         self
     }
 

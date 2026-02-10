@@ -30,8 +30,8 @@ impl HttpClientRequest {
     /// If the URL scheme is `"http"`, HTTP/1.1 will be used for the request.
     /// 
     /// If the URL scheme is `"https"`, a secure TLS connection is established and ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
-    pub async fn send(self, endpoint: impl AsRef<str>) -> anyhow::Result<HttpResponse> {
-        let url = endpoint.as_ref().parse::<Uri>()?;
+    pub async fn send(self, endpoint: impl Into<String>) -> anyhow::Result<HttpResponse> {
+        let url = endpoint.into().parse::<Uri>()?;
         let scheme = match url.scheme_str() {
             Some(scheme) => scheme,
             None => return Err(anyhow::anyhow!("URL is missing a scheme.")),
