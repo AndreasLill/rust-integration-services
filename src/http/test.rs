@@ -63,16 +63,16 @@ async fn http_sender_tls() {
 
 #[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::get().body("test".as_bytes()).header("test", "test");
+    let request = HttpRequest::get().body("test").header("test", "test");
     assert_eq!(request.method.as_str(), "GET");
-    assert_eq!(request.body, "test".as_bytes());
+    assert_eq!(request.body, "test");
     assert_eq!(request.headers.get("test").unwrap(), "test");
 }
 
 #[tokio::test]
 async fn http_response() {
-    let response = HttpResponse::ok().body("test".as_bytes()).header("test", "test");
+    let response = HttpResponse::ok().body("test").header("test", "test");
     assert_eq!(response.status, 200);
-    assert_eq!(response.body, "test".as_bytes());
+    assert_eq!(response.body, "test");
     assert_eq!(response.headers.get("test").unwrap(), "test");
 }

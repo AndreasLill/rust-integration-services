@@ -31,8 +31,8 @@ impl HttpRequest {
     }
 
     /// Sets the HTTP request body.
-    pub fn body(mut self, body: &[u8]) -> Self {
-        self.body = Bytes::copy_from_slice(body);
+    pub fn body(mut self, body: impl Into<Bytes>) -> Self {
+        self.body = body.into();
         self
     }
 
