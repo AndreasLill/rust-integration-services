@@ -1,56 +1,30 @@
 use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
 use futures::FutureExt;
-use time::{Date, OffsetDateTime, Time, Duration};
+use time::{OffsetDateTime, Duration};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
+
+use crate::scheduler::scheduler_config::SchedulerConfig;
 
 use super::scheduler_interval::SchedulerInterval;
 
 type TriggerCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
-pub struct ScheduleReceiver {
-    interval: SchedulerInterval,
+pub struct Scheduler {
+    config: SchedulerConfig,
     next_run: OffsetDateTime,
-    callback_trigger: TriggerCallback,
+    callback: TriggerCallback,
 }
 
-impl ScheduleReceiver {
-    pub fn new() -> Self {
-        ScheduleReceiver {
-            interval: SchedulerInterval::None,
-            next_run: OffsetDateTime::now_utc(),
-            callback_trigger: Arc::new(|| Box::pin(async {})),
+impl Scheduler {
+    pub fn new(config: SchedulerConfig) -> Self {
+        let start_date = config.start_date;
+        let start_time = config.start_time;
+        Scheduler {
+            config,
+            next_run: start_date.with_time(start_time).assume_utc(),
+            callback: Arc::new(|| Box::pin(async {})),
         }
-    }
-    
-    /// Sets the `UTC` start date for the scheduled task.
-    /// 
-    /// If the provided date is in the past, the scheduler will calculate the next valid future run based on the defined interval.
-    /// 
-    /// Note: Scheduler is using `UTC: Coordinated Universal Time` to avoid daylight saving problems.
-    pub fn start_date(mut self, year: i32, month: u8, day: u8) -> Self {
-        let date = Date::from_calendar_date(year, month.try_into().unwrap(), day).expect("Not a valid date.");
-        let time = self.next_run.time();
-        self.next_run = date.with_time(time).assume_utc();
-        self
-    }
-    
-    /// Sets the `UTC` start time for the scheduled task.
-    /// 
-    /// If the provided time is in the past, the scheduler will calculate the next valid future run based on the defined interval.
-    /// 
-    /// Note: Scheduler is using `UTC: Coordinated Universal Time` to avoid daylight saving problems.
-    pub fn start_time(mut self, hour: u8, minute: u8, second: u8) -> Self {
-        let time = Time::from_hms(hour, minute, second).expect("Not a valid time.");
-        let date = self.next_run.date();
-        self.next_run = date.with_time(time).assume_utc();
-        self
-    }
-    
-    /// Sets the interval of how frequently the task should run.
-    pub fn interval(mut self, interval: SchedulerInterval) -> Self {
-        self.interval = interval;
-        self
     }
 
     pub fn trigger<T, Fut>(mut self, callback: T) -> Self
@@ -58,7 +32,7 @@ impl ScheduleReceiver {
         T: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.callback_trigger = Arc::new(move || Box::pin(callback()));
+        self.callback = Arc::new(move || Box::pin(callback()));
         self
     }
 
@@ -68,7 +42,7 @@ impl ScheduleReceiver {
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
 
         if self.next_run < OffsetDateTime::now_utc() {
-            self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
+            self.next_run = Self::calculate_next_run(self.next_run, self.config.interval).await;
         }
 
         tracing::trace!("Scheduler next run at {:?}", self.next_run);
@@ -81,17 +55,17 @@ impl ScheduleReceiver {
                     sleep(Self::to_std_duration(duration)).await;
                 }
                 
-                if self.interval != SchedulerInterval::None {
-                    self.next_run = Self::calculate_next_run(self.next_run, self.interval).await;
+                if self.config.interval != SchedulerInterval::None {
+                    self.next_run = Self::calculate_next_run(self.next_run, self.config.interval).await;
                 }
 
-                let callback_fut = (self.callback_trigger)();
+                let callback_fut = (self.callback)();
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 if let Err(err) = result {
                     tracing::trace!("{:?}", err);
                 }
                 
-                if self.interval == SchedulerInterval::None {
+                if self.config.interval == SchedulerInterval::None {
                     break;
                 }
 
