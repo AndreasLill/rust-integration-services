@@ -11,8 +11,6 @@ pub mod http_client_config;
 #[cfg(feature = "http")]
 pub mod http_client_version;
 #[cfg(feature = "http")]
-pub mod http_client_request;
-#[cfg(feature = "http")]
 pub mod http_request;
 #[cfg(feature = "http")]
 pub mod http_response;
