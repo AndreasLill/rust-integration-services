@@ -121,3 +121,9 @@ impl Scheduler {
         }
     }
 }
+
+impl Default for Scheduler {
+    fn default() -> Self {
+        Scheduler::new(SchedulerConfig::new())
+    }
+}

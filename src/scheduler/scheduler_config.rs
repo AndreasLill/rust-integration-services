@@ -9,7 +9,7 @@ pub struct SchedulerConfig {
 }
 
 impl SchedulerConfig {
-    pub fn default() -> Self {
+    pub fn new() -> Self {
         SchedulerConfig {
             interval: SchedulerInterval::None,
             start_date: OffsetDateTime::now_utc().date(),
