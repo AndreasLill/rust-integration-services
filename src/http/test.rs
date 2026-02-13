@@ -1,10 +1,11 @@
 use std::{env::home_dir, time::Duration};
-use crate::http::{http_client::HttpClient, http_server::HttpServer, http_request::HttpRequest, http_response::HttpResponse};
+use crate::http::{http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, http_server::HttpServer, http_server_config::HttpServerConfig};
 
 #[tokio::test(start_paused = true)]
 async fn http_receiver() {
     tokio::spawn(async move {
-        HttpServer::new("127.0.0.1:8080")
+        let config = HttpServerConfig::new("127.0.0.1", 8080);
+        HttpServer::new(config)
         .route("/", async move |_request| {
             HttpResponse::ok()
         })
@@ -25,13 +26,14 @@ async fn http_receiver() {
 /// mkcert localhost 127.0.0.1 ::1
 #[tokio::test(start_paused = true)]
 async fn http_receiver_tls() {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+    tracing_subscriber::fmt().init();
     assert!(home_dir().is_some());
     tokio::spawn(async move {
         let server_cert_path = home_dir().unwrap().join("localhost+2.pem");
         let server_key_path = home_dir().unwrap().join("localhost+2-key.pem");
-        HttpServer::new("127.0.0.1:8080")
-        .tls(server_cert_path, server_key_path)
+
+        let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
+        HttpServer::new(config)
         .route("/", async move |_request| {
             HttpResponse::ok()
         })

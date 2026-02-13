@@ -5,6 +5,8 @@ mod http_executor;
 #[cfg(feature = "http")]
 pub mod http_server;
 #[cfg(feature = "http")]
+pub mod http_server_config;
+#[cfg(feature = "http")]
 pub mod http_client;
 #[cfg(feature = "http")]
 pub mod http_client_config;

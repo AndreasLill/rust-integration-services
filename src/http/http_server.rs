@@ -1,55 +1,28 @@
-use std::{convert::Infallible, panic::AssertUnwindSafe, path::Path, pin::Pin, sync::Arc};
+use std::{convert::Infallible, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
 use futures::FutureExt;
 use http_body_util::{BodyExt, Full};
 use hyper::{body::{Bytes, Incoming}, header::{HeaderName, HeaderValue}, service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
 use matchit::Router;
-use rustls::ServerConfig;
 use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 
-use crate::http::{crypto::Crypto, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse};
+use crate::http::{http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_server_config::HttpServerConfig};
 
 type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 pub struct HttpServer {
-    host: String,
+    config: HttpServerConfig,
     router: Router<RouteCallback>,
-    tls_config: Option<ServerConfig>,
 }
 
 impl HttpServer {
-    /// Creates a new `HttpServer` instance bound to the specified host address. Example: `127.0.0.1:8080`.
-    pub fn new(host: impl Into<String>) -> Self {
+    pub fn new(config: HttpServerConfig) -> Self {
         HttpServer {
-            host: host.into(),
+            config,
             router: Router::new(),
-            tls_config: None,
         }
-    }
-
-    /// Enables TLS for incoming connections using the provided server certificate and private key in `.pem` format and
-    /// configures the TLS context and sets supported ALPN protocols to allow HTTP/2 and HTTP/1.1.
-    pub fn tls(mut self, tls_server_cert_path: impl AsRef<Path>, tls_server_key_path: impl AsRef<Path>) -> Self {
-        let mut tls_config = Self::create_tls_config(tls_server_cert_path, tls_server_key_path).expect("Failed to create TLS config");
-        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-        self.tls_config = Some(tls_config);
-        self
-    }
-
-    fn create_tls_config(cert_path: impl AsRef<Path>, key_path: impl AsRef<Path>) -> anyhow::Result<ServerConfig> {
-        let certs = Crypto::pem_load_certs(cert_path)?;
-        let key = Crypto::pem_load_private_key(key_path)?;
-
-        Crypto::install_crypto_provider()?;
-        
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)?;
-
-        Ok(config)
     }
 
     /// Registers a route with a path, associating it with a handler callback.
@@ -67,16 +40,18 @@ impl HttpServer {
     /// This method binds to the configured host address and enters a loop to accept new TCP connections.
     /// It also listens for system termination signals (SIGINT, SIGTERM) to gracefully shut down the server.
     pub async fn receive(self) {
-        let tls_acceptor = self.tls_config.map(|tls_config| {
+        let tls_acceptor = self.config.tls_config.map(|tls_config| {
             TlsAcceptor::from(Arc::new(tls_config))
         });
-        let listener = TcpListener::bind(&self.host).await.expect("Failed to start TCP Listener");
+
+        let host = format!("{}:{}", self.config.ip, self.config.port);
+        let listener = TcpListener::bind(&host).await.expect("Failed to start TCP Listener");
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
         let mut receiver_join_set = JoinSet::new();
         let router = Arc::new(self.router);
         
-        tracing::trace!("started on {}", self.host);
+        tracing::trace!("Started on {}", &host);
         loop {
             tokio::select! {
                 _ = sigterm.recv() => {
@@ -111,9 +86,9 @@ impl HttpServer {
             }
         }
 
-        tracing::trace!("shut down pending...");
+        tracing::trace!("Shut down pending...");
         while let Some(_) = receiver_join_set.join_next().await {}
-        tracing::trace!("shut down complete");
+        tracing::trace!("Shut down complete");
     }
 
     async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>) {
@@ -185,7 +160,7 @@ impl HttpServer {
                     }
                 };
 
-                let hyper_res = match Self::build_http_response(response.clone()).await {
+                let hyper_res = match Self::build_http_response(response).await {
                     Ok(res) => res,
                     Err(err) => {
                         tracing::error!("{:?}", err);
@@ -197,7 +172,7 @@ impl HttpServer {
             },
             Err(_) => {
                 let response = HttpResponse::not_found();
-                let hyper_res = match Self::build_http_response(response.clone()).await {
+                let hyper_res = match Self::build_http_response(response).await {
                     Ok(res) => res,
                     Err(err) => {
                         tracing::error!("{:?}", err);
