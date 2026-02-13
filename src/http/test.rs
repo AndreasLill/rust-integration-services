@@ -2,7 +2,7 @@ use std::{env::home_dir, time::Duration};
 use crate::http::{http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, http_server::HttpServer, http_server_config::HttpServerConfig};
 
 #[tokio::test(start_paused = true)]
-async fn http_receiver() {
+async fn http_server() {
     tokio::spawn(async move {
         let config = HttpServerConfig::new("127.0.0.1", 8080);
         HttpServer::new(config)
@@ -25,7 +25,7 @@ async fn http_receiver() {
 /// mkcert -install
 /// mkcert localhost 127.0.0.1 ::1
 #[tokio::test(start_paused = true)]
-async fn http_receiver_tls() {
+async fn http_server_tls() {
     tracing_subscriber::fmt().init();
     assert!(home_dir().is_some());
     tokio::spawn(async move {
@@ -52,13 +52,13 @@ async fn http_receiver_tls() {
 }
 
 #[tokio::test]
-async fn http_sender() {
+async fn http_client() {
     let result = HttpClient::default().request(HttpRequest::get()).send("http://httpbin.org/get").await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
-async fn http_sender_tls() {
+async fn http_client_tls() {
     let result = HttpClient::default().request(HttpRequest::get()).send("https://httpbin.org/get").await;
     assert!(result.is_ok());
 }

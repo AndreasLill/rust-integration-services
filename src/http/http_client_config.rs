@@ -33,13 +33,14 @@ impl HttpClientConfig {
         .with_root_certificates(root_cert_store.clone())
         .with_no_client_auth();
 
-        Self {
+        HttpClientConfig {
             http_version: HttpClientVersion::Auto,
             tls_config,
         }
     }
 
-    pub fn default() -> Self {
-        HttpClientConfig::new()
+    pub fn http_version(mut self, version: HttpClientVersion) -> Self {
+        self.http_version = version;
+        self
     }
 }

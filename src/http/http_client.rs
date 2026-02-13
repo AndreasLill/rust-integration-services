@@ -27,14 +27,20 @@ impl HttpClient<NoRequest> {
         }
     }
 
-    pub fn default() -> Self {
-        Self::new(HttpClientConfig::default())
-    }
-
     pub fn request(&self, request: HttpRequest) -> HttpClient<HasRequest> {
         HttpClient {
             config: self.config.clone(),
             request: Some(request),
+            _state: PhantomData
+        }
+    }
+}
+
+impl Default for HttpClient<NoRequest> {
+    fn default() -> Self {
+        HttpClient {
+            config: Arc::new(HttpClientConfig::new()),
+            request: None,
             _state: PhantomData
         }
     }
@@ -55,7 +61,7 @@ impl HttpClient<HasRequest> {
 
         match scheme {
             "http" => {
-                if self.config.http_version == HttpClientVersion::ForceHttp2 {
+                if self.config.http_version == HttpClientVersion::Http2 {
                     return Err(anyhow::anyhow!("https scheme is required for HTTP/2"));
                 }
                 self.send_tcp(url).await
@@ -101,8 +107,8 @@ impl HttpClient<HasRequest> {
 
         tls_config.alpn_protocols = match self.config.http_version {
             HttpClientVersion::Auto => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
-            HttpClientVersion::ForceHttp1 => vec![b"http/1.1".to_vec()],
-            HttpClientVersion::ForceHttp2 => vec![b"h2".to_vec()],
+            HttpClientVersion::Http1 => vec![b"http/1.1".to_vec()],
+            HttpClientVersion::Http2 => vec![b"h2".to_vec()],
         };
     
         let tcp_stream = TcpStream::connect((host, port)).await?;
@@ -117,8 +123,8 @@ impl HttpClient<HasRequest> {
                     _ => Version::HTTP_11,
                 }
             },
-            HttpClientVersion::ForceHttp1 => Version::HTTP_11,
-            HttpClientVersion::ForceHttp2 => Version::HTTP_2,
+            HttpClientVersion::Http1 => Version::HTTP_11,
+            HttpClientVersion::Http2 => Version::HTTP_2,
         };
 
         match version {
