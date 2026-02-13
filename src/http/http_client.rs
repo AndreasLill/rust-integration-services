@@ -38,11 +38,7 @@ impl HttpClient<NoRequest> {
 
 impl Default for HttpClient<NoRequest> {
     fn default() -> Self {
-        HttpClient {
-            config: Arc::new(HttpClientConfig::new()),
-            request: None,
-            _state: PhantomData
-        }
+        HttpClient::new(HttpClientConfig::new())
     }
 }
 
