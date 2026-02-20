@@ -1,17 +1,13 @@
 #[cfg(feature = "http")]
 mod crypto;
 #[cfg(feature = "http")]
-mod http_executor;
+mod executor;
+
 #[cfg(feature = "http")]
-pub mod http_server;
+pub mod client;
 #[cfg(feature = "http")]
-pub mod http_server_config;
-#[cfg(feature = "http")]
-pub mod http_client;
-#[cfg(feature = "http")]
-pub mod http_client_config;
-#[cfg(feature = "http")]
-pub mod http_client_version;
+pub mod server;
+
 #[cfg(feature = "http")]
 pub mod http_request;
 #[cfg(feature = "http")]

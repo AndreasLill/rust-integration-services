@@ -7,7 +7,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-use crate::http::{http_client_config::HttpClientConfig, http_client_version::HttpClientVersion, http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse};
+use crate::http::{client::{http_client_config::HttpClientConfig, http_client_version::HttpClientVersion}, executor::Executor, http_request::HttpRequest, http_response::HttpResponse};
 
 pub struct NoRequest;
 pub struct HasRequest;
@@ -126,7 +126,7 @@ impl HttpClient<HasRequest> {
         match version {
             Version::HTTP_2 => {
                 let io = TokioIo::new(tls_stream);
-                let (mut sender, connection) = hyper::client::conn::http2::Builder::new(HttpExecutor).handshake(io).await?;
+                let (mut sender, connection) = hyper::client::conn::http2::Builder::new(Executor).handshake(io).await?;
                 
                 tokio::spawn(async move {
                     connection.await

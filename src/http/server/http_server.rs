@@ -8,7 +8,7 @@ use matchit::Router;
 use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 
-use crate::http::{http_executor::HttpExecutor, http_request::HttpRequest, http_response::HttpResponse, http_server_config::HttpServerConfig};
+use crate::http::{executor::Executor, http_request::HttpRequest, http_response::HttpResponse, server::http_server_config::HttpServerConfig};
 
 type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
@@ -125,7 +125,7 @@ impl HttpServer {
         let protocol = io.inner().get_ref().1.alpn_protocol();
         match protocol.as_deref() {
             Some(b"h2") => {
-                if let Err(err) = hyper::server::conn::http2::Builder::new(HttpExecutor).serve_connection(io, service).await {
+                if let Err(err) = hyper::server::conn::http2::Builder::new(Executor).serve_connection(io, service).await {
                     tracing::error!("TLS handshake failed {:?}", err);
                 }
             }

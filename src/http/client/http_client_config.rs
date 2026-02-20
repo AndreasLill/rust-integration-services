@@ -1,7 +1,7 @@
 use rustls::{ClientConfig, RootCertStore};
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::http::{crypto::Crypto, http_client_version::HttpClientVersion};
+use crate::http::{client::http_client_version::HttpClientVersion, crypto::Crypto};
 
 pub struct HttpClientConfig {
     pub http_version: HttpClientVersion,

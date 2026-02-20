@@ -1,7 +1,7 @@
 #[derive(Clone)]
-pub struct HttpExecutor;
+pub struct Executor;
 
-impl<F> hyper::rt::Executor<F> for HttpExecutor
+impl<F> hyper::rt::Executor<F> for Executor
 where
     F: std::future::Future + Send + 'static,
     F::Output: Send + 'static,

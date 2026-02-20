@@ -1,8 +1,8 @@
 use std::{env::home_dir, time::Duration};
-use crate::http::{http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, http_server::HttpServer, http_server_config::HttpServerConfig};
+use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::HttpServer, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
-async fn http_server() {
+async fn http_server_client() {
     tokio::spawn(async move {
         let config = HttpServerConfig::new("127.0.0.1", 8080);
         HttpServer::new(config)
@@ -23,14 +23,14 @@ async fn http_server() {
 /// Create your own certs for testing.
 /// 
 /// mkcert -install
-/// mkcert localhost 127.0.0.1 ::1
+/// mkcert -cert-file server.pem -key-file server-key.pem localhost 127.0.0.1
 #[tokio::test(start_paused = true)]
-async fn http_server_tls() {
+async fn http_server_client_tls() {
     tracing_subscriber::fmt().init();
     assert!(home_dir().is_some());
     tokio::spawn(async move {
-        let server_cert_path = home_dir().unwrap().join("localhost+2.pem");
-        let server_key_path = home_dir().unwrap().join("localhost+2-key.pem");
+        let server_cert_path = home_dir().unwrap().join("server.pem");
+        let server_key_path = home_dir().unwrap().join("server-key.pem");
 
         let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
         HttpServer::new(config)
