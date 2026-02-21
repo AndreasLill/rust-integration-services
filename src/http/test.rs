@@ -1,13 +1,17 @@
 use std::{env::home_dir, time::Duration};
-use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::HttpServer, http_server_config::HttpServerConfig}};
+
+use http_body_util::BodyExt;
+
+use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_request_2::HttpRequest2, http_response::HttpResponse, http_response_2::HttpResponse2, server::{http_server::HttpServer, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
 async fn http_server_client() {
+    tracing_subscriber::fmt().init();
     tokio::spawn(async move {
         let config = HttpServerConfig::new("127.0.0.1", 8080);
         HttpServer::new(config)
-        .route("/", async move |_request| {
-            HttpResponse::ok()
+        .route("/", async move |_req| {
+            HttpResponse2::ok()
         })
         .receive()
         .await;
@@ -34,8 +38,8 @@ async fn http_server_client_tls() {
 
         let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
         HttpServer::new(config)
-        .route("/", async move |_request| {
-            HttpResponse::ok()
+        .route("/", async move |_req| {
+            HttpResponse2::ok()
         })
         .receive()
         .await;
@@ -61,6 +65,15 @@ async fn http_client() {
 async fn http_client_tls() {
     let result = HttpClient::default().request(HttpRequest::get()).send("https://httpbin.org/get").await;
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn http_request_2() {
+    let request = HttpRequest2::builder().header("key", "value").body_bytes("body").build();
+    assert_eq!(request.parts.method.as_str(), "GET");
+    assert_eq!(request.parts.headers.get("key").unwrap(), "value");
+    let body = request.body.collect().await.unwrap().to_bytes();
+    assert_eq!(body, "body");
 }
 
 #[tokio::test]
