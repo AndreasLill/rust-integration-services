@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::Infallible;
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
@@ -43,7 +42,7 @@ impl HttpRequestBuilder {
     pub fn body_bytes(mut self, body: impl Into<Bytes>) -> HttpRequestBuilder {
         self.body = Some(
             Full::from(body.into())
-            .map_err(|e: Infallible| match e {})
+            .map_err(|e| match e {})
             .boxed()
         );
         self
@@ -80,7 +79,7 @@ impl HttpRequestBuilder {
             Some(body) => body,
             None => {
                 Empty::new()
-                .map_err(|e: Infallible| match e {})
+                .map_err(|e| match e {})
                 .boxed()
             },
         };
