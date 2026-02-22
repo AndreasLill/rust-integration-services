@@ -18,7 +18,7 @@ async fn http_server_client() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let result = HttpClient::default().request(HttpRequest::get()).send("http://127.0.0.1:8080").await;
+    let result = HttpClient::default().request(HttpRequest2::builder().build()).send("http://127.0.0.1:8080").await;
     assert!(result.is_ok());
     let response = result.unwrap();
     assert_eq!(response.status, 200);
@@ -46,7 +46,7 @@ async fn http_server_client_tls() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let result = HttpClient::default().request(HttpRequest::get()).send("https://127.0.0.1:8080").await;
+    let result = HttpClient::default().request(HttpRequest2::builder().build()).send("https://127.0.0.1:8080").await;
     tracing::info!(?result);
     assert!(result.is_ok());
     
@@ -57,13 +57,13 @@ async fn http_server_client_tls() {
 
 #[tokio::test]
 async fn http_client() {
-    let result = HttpClient::default().request(HttpRequest::get()).send("http://httpbin.org/get").await;
+    let result = HttpClient::default().request(HttpRequest2::builder().build()).send("http://httpbin.org/get").await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn http_client_tls() {
-    let result = HttpClient::default().request(HttpRequest::get()).send("https://httpbin.org/get").await;
+    let result = HttpClient::default().request(HttpRequest2::builder().build()).send("https://httpbin.org/get").await;
     assert!(result.is_ok());
 }
 

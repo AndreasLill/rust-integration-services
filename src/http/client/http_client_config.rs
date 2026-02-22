@@ -14,7 +14,7 @@ impl HttpClientConfig {
     /// By default, the client trusts the system native root certs in addition to Mozilla root certificates provided by the
     /// [`webpki_roots`](https://docs.rs/webpki-roots) crate.
     /// 
-    pub fn new() -> Self {
+    pub fn new(version: HttpClientVersion) -> Self {
         let mut root_cert_store = RootCertStore::empty();
         root_cert_store.extend(TLS_SERVER_ROOTS.iter().cloned());
         let native_certs = rustls_native_certs::load_native_certs();
@@ -29,18 +29,19 @@ impl HttpClientConfig {
             tracing::warn!("failed to install crypto provider: {:?}", error);
         }
 
-        let tls_config = ClientConfig::builder()
+        let mut tls_config = ClientConfig::builder()
         .with_root_certificates(root_cert_store.clone())
         .with_no_client_auth();
 
+        tls_config.alpn_protocols = match version {
+            HttpClientVersion::Auto => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+            HttpClientVersion::Http1 => vec![b"http/1.1".to_vec()],
+            HttpClientVersion::Http2 => vec![b"h2".to_vec()],
+        };
+
         HttpClientConfig {
-            http_version: HttpClientVersion::Auto,
+            http_version: version,
             tls_config,
         }
-    }
-
-    pub fn http_version(mut self, version: HttpClientVersion) -> Self {
-        self.http_version = version;
-        self
     }
 }
