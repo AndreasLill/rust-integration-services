@@ -1,19 +1,18 @@
 use std::{marker::PhantomData, sync::Arc};
 
-use http_body_util::BodyExt;
-use hyper::{Request, Response, Uri, Version, body::Incoming};
+use hyper::{Request, Uri, Version};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-use crate::http::{client::{http_client_config::HttpClientConfig, http_client_version::HttpClientVersion}, executor::Executor, http_request_2::HttpRequest2, http_response::HttpResponse};
+use crate::http::{client::{http_client_config::HttpClientConfig, http_client_version::HttpClientVersion}, executor::Executor, http_request::HttpRequest, http_response::HttpResponse};
 
 pub struct NoRequest;
 pub struct HasRequest;
 
 pub struct HttpClient<State> {
     config: Arc<HttpClientConfig>,
-    request: Option<HttpRequest2>,
+    request: Option<HttpRequest>,
     _state: PhantomData<State>
 }
 
@@ -26,7 +25,7 @@ impl HttpClient<NoRequest> {
         }
     }
 
-    pub fn request(&self, request: HttpRequest2) -> HttpClient<HasRequest> {
+    pub fn request(&self, request: HttpRequest) -> HttpClient<HasRequest> {
         HttpClient {
             config: self.config.clone(),
             request: Some(request),
@@ -88,9 +87,7 @@ impl HttpClient<HasRequest> {
         });
         
         let res = sender.send_request(Request::from(request)).await?;
-        let response = Self::build_http_response(res).await?;
-        
-        Ok(response)
+        Ok(HttpResponse::from(res))
     }
     
     async fn send_tls(self) -> anyhow::Result<HttpResponse> {
@@ -132,9 +129,7 @@ impl HttpClient<HasRequest> {
                 });
                 
                 let res = sender.send_request(Request::from(request)).await?;
-                let response = Self::build_http_response(res).await?;
-                
-                Ok(response)
+                Ok(HttpResponse::from(res))
             }
             Version::HTTP_11 => {
                 let io = TokioIo::new(tls_stream);
@@ -145,27 +140,11 @@ impl HttpClient<HasRequest> {
                 });
                 
                 let res = sender.send_request(Request::from(request)).await?;
-                let response = Self::build_http_response(res).await?;
-                Ok(response)
+                Ok(HttpResponse::from(res))
             }
             _ => {
                 Err(anyhow::anyhow!("Unsupported HTTP version"))
             }
         }
-    }
-
-    async fn build_http_response(res: Response<Incoming>) -> anyhow::Result<HttpResponse> {
-        let (parts, body) = res.into_parts();
-        let mut response = HttpResponse::new(parts.status.as_u16());
-        
-        for (key, value) in parts.headers {
-            if let Some(key) = key {
-                response.headers.insert(key.to_string(), value.to_str()?.to_string());
-            }
-        }
-        
-        response.body = body.collect().await?.to_bytes();
-        
-        Ok(response)
     }
 }

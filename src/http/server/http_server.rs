@@ -8,9 +8,9 @@ use matchit::Router;
 use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 
-use crate::http::{executor::Executor, http_request_2::HttpRequest2, http_response_2::HttpResponse2, server::http_server_config::HttpServerConfig};
+use crate::http::{executor::Executor, http_request::HttpRequest, http_response::HttpResponse, server::http_server_config::HttpServerConfig};
 
-type RouteCallback = Arc<dyn Fn(HttpRequest2) -> Pin<Box<dyn Future<Output = HttpResponse2> + Send>> + Send + Sync>;
+type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 pub struct HttpServer {
     config: HttpServerConfig,
@@ -28,8 +28,8 @@ impl HttpServer {
     /// Registers a route with a path, associating it with a handler callback.
     pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> Self
     where
-        T: Fn(HttpRequest2) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse2> + Send + 'static,
+        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HttpResponse> + Send + 'static,
     {
         self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
         self
@@ -137,7 +137,7 @@ impl HttpServer {
         }
     }
 
-    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, Infallible>>, Infallible> {
+    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
         /* let (parts, body) = req.into_parts();
         let response = Response::builder()
         .status(200)
@@ -150,21 +150,21 @@ impl HttpServer {
             Ok(matched) => {
                 //let = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
                 let callback = matched.value;
-                let req = HttpRequest2::from(request);
+                let req = HttpRequest::from(request);
                 let callback_fut = callback(req);
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 let response = match result {
                     Ok(res) => res,
                     Err(err) => {
                         tracing::error!("{:?}", err);
-                        HttpResponse2::internal_server_error()
+                        HttpResponse::internal_server_error()
                     }
                 };
 
                 Ok(Response::from(response))
             },
             Err(_) => {
-                let response = HttpResponse2::internal_server_error();
+                let response = HttpResponse::internal_server_error();
                 Ok(Response::from(response))
             },
         }
