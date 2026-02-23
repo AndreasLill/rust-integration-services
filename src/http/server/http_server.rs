@@ -1,8 +1,8 @@
 use std::{convert::Infallible, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
 use futures::FutureExt;
-use http_body_util::{BodyExt, Full};
-use hyper::{body::{Bytes, Incoming}, header::{HeaderName, HeaderValue}, service::service_fn, Request, Response};
+use http_body_util::combinators::BoxBody;
+use hyper::{Request, Response, body::{Bytes, Incoming}, service::service_fn};
 use hyper_util::rt::TokioIo;
 use matchit::Router;
 use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
@@ -137,20 +137,21 @@ impl HttpServer {
         }
     }
 
-    async fn incoming_request(req: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<Full<Bytes>>, Infallible> {
-        let mut request = match Self::build_http_request(req).await {
-            Ok(req) => req,
-            Err(err) => {
-                tracing::error!("{:?}", err);
-                return Ok(Self::hyper_internal_server_error_response())
-            },
-        };
+    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
+        /* let (parts, body) = req.into_parts();
+        let response = Response::builder()
+        .status(200)
+        .body(body.boxed())
+        .unwrap();
 
-        match router.at(&request.path) {
+        Ok(response) */
+
+        match router.at(&request.uri().path()) {
             Ok(matched) => {
-                request.params = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+                //let = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
                 let callback = matched.value;
-                let callback_fut = callback(request);
+                let req = HttpRequest::from(request);
+                let callback_fut = callback(req);
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 let response = match result {
                     Ok(res) => res,
@@ -160,55 +161,12 @@ impl HttpServer {
                     }
                 };
 
-                let hyper_res = match Self::build_http_response(response).await {
-                    Ok(res) => res,
-                    Err(err) => {
-                        tracing::error!("{:?}", err);
-                        return Ok(Self::hyper_internal_server_error_response())
-                    },
-                };
-
-                Ok(hyper_res)
+                Ok(Response::from(response))
             },
             Err(_) => {
-                let response = HttpResponse::not_found();
-                let hyper_res = match Self::build_http_response(response).await {
-                    Ok(res) => res,
-                    Err(err) => {
-                        tracing::error!("{:?}", err);
-                        return Ok(Self::hyper_internal_server_error_response())
-                    },
-                };
-
-                Ok(hyper_res)
+                let response = HttpResponse::internal_server_error();
+                Ok(Response::from(response))
             },
         }
-    }
-
-    async fn build_http_request(req: Request<Incoming>) -> anyhow::Result<HttpRequest> {
-        let (parts, body) = req.into_parts();
-        let mut request = HttpRequest::new(parts.method.as_str().to_string());
-        request.path = parts.uri.path().to_string();
-        for (key, value) in parts.headers.iter() {
-            if let Ok(value) = value.to_str() {
-                request.headers.insert(key.to_string(), value.to_string());
-            }
-        }
-        request.body = body.collect().await?.to_bytes();
-        Ok(request)
-    }
-
-    async fn build_http_response(res: HttpResponse) -> anyhow::Result<Response<Full<Bytes>>> {
-        let mut response: Response<Full<Bytes>> = Response::builder().status(res.status).body(res.body.into())?;
-        for (key, value) in res.headers.iter() {
-            let header_name = HeaderName::from_bytes(key.as_bytes())?;
-            let header_value = HeaderValue::from_bytes(&value.as_bytes())?;
-            response.headers_mut().insert(header_name, header_value);
-        }
-        Ok(response)
-    }
-
-    fn hyper_internal_server_error_response() -> Response<Full<Bytes>> {
-        Response::builder().status(500).body(Full::new(Bytes::new())).unwrap()
     }
 }

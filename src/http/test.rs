@@ -1,12 +1,16 @@
 use std::{env::home_dir, time::Duration};
+
+use http_body_util::BodyExt;
+
 use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::HttpServer, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
 async fn http_server_client() {
+    tracing_subscriber::fmt().init();
     tokio::spawn(async move {
         let config = HttpServerConfig::new("127.0.0.1", 8080);
         HttpServer::new(config)
-        .route("/", async move |_request| {
+        .route("/", async move |_req| {
             HttpResponse::ok()
         })
         .receive()
@@ -17,7 +21,7 @@ async fn http_server_client() {
     let result = HttpClient::default().request(HttpRequest::get()).send("http://127.0.0.1:8080").await;
     assert!(result.is_ok());
     let response = result.unwrap();
-    assert_eq!(response.status, 200);
+    assert_eq!(response.parts.status.as_u16(), 200);
 }
 
 /// Create your own certs for testing.
@@ -34,7 +38,7 @@ async fn http_server_client_tls() {
 
         let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
         HttpServer::new(config)
-        .route("/", async move |_request| {
+        .route("/", async move |_req| {
             HttpResponse::ok()
         })
         .receive()
@@ -48,7 +52,7 @@ async fn http_server_client_tls() {
     
     let response = result.unwrap();
     tracing::info!(?response);
-    assert_eq!(response.status, 200);
+    assert_eq!(response.parts.status.as_u16(), 200);
 }
 
 #[tokio::test]
@@ -65,16 +69,18 @@ async fn http_client_tls() {
 
 #[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::get().body("test").header("test", "test");
-    assert_eq!(request.method.as_str(), "GET");
-    assert_eq!(request.body, "test");
-    assert_eq!(request.headers.get("test").unwrap(), "test");
+    let request = HttpRequest::builder().method("GET").header("key", "value").body_bytes("body").build();
+    assert_eq!(request.parts.method.as_str(), "GET");
+    assert_eq!(request.parts.headers.get("key").unwrap(), "value");
+    let body = request.body.collect().await.unwrap().to_bytes();
+    assert_eq!(body, "body");
 }
 
 #[tokio::test]
 async fn http_response() {
-    let response = HttpResponse::ok().body("test").header("test", "test");
-    assert_eq!(response.status, 200);
-    assert_eq!(response.body, "test");
-    assert_eq!(response.headers.get("test").unwrap(), "test");
+    let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").build();
+    assert_eq!(response.parts.status.as_u16(), 200);
+    assert_eq!(response.parts.headers.get("key").unwrap(), "value");
+    let body = response.body.collect().await.unwrap().to_bytes();
+    assert_eq!(body, "body");
 }
