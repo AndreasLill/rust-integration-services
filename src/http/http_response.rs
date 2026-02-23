@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, marker::PhantomData};
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
 use hyper::{Error, Response, body::{Frame, Incoming}};
+
+pub struct HasStatus;
+pub struct NoStatus;
 
 #[derive(Debug)]
 pub struct HttpResponse {
@@ -12,11 +15,12 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub fn builder() -> HttpResponseBuilder  {
+    pub fn builder() -> HttpResponseBuilder<NoStatus>  {
         HttpResponseBuilder {
             body: None,
             status: None,
             headers: HashMap::new(),
+            _state: PhantomData
         }
     }
 
@@ -48,15 +52,28 @@ impl HttpResponse {
     }
 }
 
-pub struct HttpResponseBuilder {
+pub struct HttpResponseBuilder<State> {
     body: Option<BoxBody<Bytes, Error>>,
     status: Option<u16>,
     headers: HashMap<String, String>,
+    _state: PhantomData<State>
 }
 
-impl HttpResponseBuilder {
+impl HttpResponseBuilder<NoStatus>  {
 
-    pub fn body_bytes(mut self, body: impl Into<Bytes>) -> HttpResponseBuilder {
+    pub fn status(self, status: u16) -> HttpResponseBuilder<HasStatus> {
+        HttpResponseBuilder {
+            body: self.body,
+            status: Some(status.into()),
+            headers: self.headers,
+            _state: PhantomData
+        }
+    }
+}
+
+impl HttpResponseBuilder<HasStatus> {
+
+    pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
         self.body = Some(
             Full::from(body.into())
             .map_err(|e| match e {})
@@ -65,7 +82,7 @@ impl HttpResponseBuilder {
         self
     }
 
-    pub fn body_stream<S>(mut self, stream: S) -> HttpResponseBuilder
+    pub fn body_stream<S>(mut self, stream: S) -> Self
     where
         S: Stream<Item = Result<Bytes, hyper::Error>> + Send + Sync + 'static,
     {
@@ -75,18 +92,13 @@ impl HttpResponseBuilder {
         self
     }
 
-    pub fn status(mut self, status: u16) -> HttpResponseBuilder {
-        self.status = Some(status.into());
-        self
-    }
-
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> HttpResponseBuilder {
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());
         self
     }
 
     pub fn build(self) -> HttpResponse {
-        let mut builder = Response::builder().status(self.status.unwrap_or(200));
+        let mut builder = Response::builder().status(self.status.unwrap());
         
         for (key, value) in self.headers.iter() {
             builder = builder.header(key, value);

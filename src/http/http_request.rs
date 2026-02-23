@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
@@ -7,6 +8,8 @@ use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::body::Frame;
 use hyper::{Error, Request, body::Incoming};
 
+pub struct HasMethod;
+pub struct NoMethod;
 
 #[derive(Debug)]
 pub struct HttpRequest {
@@ -15,11 +18,12 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    pub fn builder() -> HttpRequestBuilder  {
+    pub fn builder() -> HttpRequestBuilder<NoMethod>  {
         HttpRequestBuilder {
             body: None,
             method: None,
             headers: HashMap::new(),
+            _state: PhantomData
         }
     }
 
@@ -29,17 +33,38 @@ impl HttpRequest {
             parts
         }
     }
+
+    pub fn get() -> HttpRequest {
+        HttpRequest::builder().method("GET").build()
+    }
+
+    pub fn post() -> HttpRequest {
+        HttpRequest::builder().method("POST").build()
+    }
 }
 
-pub struct HttpRequestBuilder {
+pub struct HttpRequestBuilder<State> {
     body: Option<BoxBody<Bytes, Error>>,
     method: Option<String>,
     headers: HashMap<String, String>,
+    _state: PhantomData<State>
 }
 
-impl HttpRequestBuilder {
+impl HttpRequestBuilder<NoMethod> {
 
-    pub fn body_bytes(mut self, body: impl Into<Bytes>) -> HttpRequestBuilder {
+    pub fn method(self, method: impl Into<String>) -> HttpRequestBuilder<HasMethod> {
+        HttpRequestBuilder {
+            body: self.body,
+            method: Some(method.into()),
+            headers: self.headers,
+            _state: PhantomData
+        }
+    }
+}
+
+impl HttpRequestBuilder<HasMethod> {
+
+    pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
         self.body = Some(
             Full::from(body.into())
             .map_err(|e| match e {})
@@ -48,7 +73,7 @@ impl HttpRequestBuilder {
         self
     }
 
-    pub fn body_stream<S>(mut self, stream: S) -> HttpRequestBuilder
+    pub fn body_stream<S>(mut self, stream: S) -> Self
     where
         S: Stream<Item = Result<Bytes, hyper::Error>> + Send + Sync + 'static,
     {
@@ -58,12 +83,7 @@ impl HttpRequestBuilder {
         self
     }
 
-    pub fn method(mut self, method: impl Into<String>) -> HttpRequestBuilder {
-        self.method = Some(method.into());
-        self
-    }
-
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> HttpRequestBuilder {
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());
         self
     }
