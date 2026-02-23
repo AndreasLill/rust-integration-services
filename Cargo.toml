@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -43,7 +43,7 @@ tokio-test = "0.4.5"
 tracing-subscriber = "0.3.22"
 
 [features]
-default = ["http"]
+default = []
 full = ["file", "scheduler", "sftp", "http", "smtp", "s3"]
 http = ["tokio", "hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pki-types", "rustls-native-certs", "matchit", "bytes"]
 file = ["tokio", "regex"]
