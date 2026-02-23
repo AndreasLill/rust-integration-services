@@ -5,8 +5,8 @@ use futures::{Stream, TryStreamExt};
 use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
 use hyper::{Error, Response, body::{Frame, Incoming}};
 
-pub struct HasStatus;
-pub struct NoStatus;
+pub struct Final;
+pub struct SetStatus;
 
 #[derive(Debug)]
 pub struct HttpResponse {
@@ -15,7 +15,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub fn builder() -> HttpResponseBuilder<NoStatus>  {
+    pub fn builder() -> HttpResponseBuilder<SetStatus>  {
         HttpResponseBuilder {
             body: None,
             status: None,
@@ -59,9 +59,9 @@ pub struct HttpResponseBuilder<State> {
     _state: PhantomData<State>
 }
 
-impl HttpResponseBuilder<NoStatus>  {
+impl HttpResponseBuilder<SetStatus>  {
 
-    pub fn status(self, status: u16) -> HttpResponseBuilder<HasStatus> {
+    pub fn status(self, status: u16) -> HttpResponseBuilder<Final> {
         HttpResponseBuilder {
             body: self.body,
             status: Some(status.into()),
@@ -71,7 +71,7 @@ impl HttpResponseBuilder<NoStatus>  {
     }
 }
 
-impl HttpResponseBuilder<HasStatus> {
+impl HttpResponseBuilder<Final> {
 
     pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
         self.body = Some(

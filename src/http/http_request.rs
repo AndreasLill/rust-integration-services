@@ -8,8 +8,8 @@ use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::body::Frame;
 use hyper::{Error, Request, body::Incoming};
 
-pub struct HasMethod;
-pub struct NoMethod;
+pub struct Final;
+pub struct SetMethod;
 
 #[derive(Debug)]
 pub struct HttpRequest {
@@ -18,7 +18,7 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    pub fn builder() -> HttpRequestBuilder<NoMethod>  {
+    pub fn builder() -> HttpRequestBuilder<SetMethod>  {
         HttpRequestBuilder {
             body: None,
             method: None,
@@ -50,9 +50,9 @@ pub struct HttpRequestBuilder<State> {
     _state: PhantomData<State>
 }
 
-impl HttpRequestBuilder<NoMethod> {
+impl HttpRequestBuilder<SetMethod> {
 
-    pub fn method(self, method: impl Into<String>) -> HttpRequestBuilder<HasMethod> {
+    pub fn method(self, method: impl Into<String>) -> HttpRequestBuilder<Final> {
         HttpRequestBuilder {
             body: self.body,
             method: Some(method.into()),
@@ -62,7 +62,7 @@ impl HttpRequestBuilder<NoMethod> {
     }
 }
 
-impl HttpRequestBuilder<HasMethod> {
+impl HttpRequestBuilder<Final> {
 
     pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
         self.body = Some(
