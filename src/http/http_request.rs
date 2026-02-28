@@ -5,24 +5,28 @@ use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use http_body_util::{Empty, Full, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
+use hyper::Version;
 use hyper::body::Frame;
 use hyper::{Error, Request, body::Incoming};
 
 pub struct Final;
 pub struct SetMethod;
+pub struct SetUri;
 
 #[derive(Debug)]
 pub struct HttpRequest {
-    pub body: BoxBody<Bytes, Error>,
+    body: BoxBody<Bytes, Error>,
     pub parts: hyper::http::request::Parts,
 }
 
 impl HttpRequest {
-    pub fn builder() -> HttpRequestBuilder<SetMethod>  {
+    pub fn builder() -> HttpRequestBuilder<SetUri>  {
         HttpRequestBuilder {
             body: None,
+            uri: None,
             method: None,
             headers: HashMap::new(),
+            version: None,
             _state: PhantomData
         }
     }
@@ -34,29 +38,51 @@ impl HttpRequest {
         }
     }
 
-    pub fn get() -> HttpRequest {
-        HttpRequest::builder().method("GET").build()
+    /// Returns the boxed body stream.
+    ///
+    /// **This consumes the HttpRequest**
+    pub fn body_as_boxed(self) -> BoxBody<Bytes, Error> {
+        self.body
     }
 
-    pub fn post() -> HttpRequest {
-        HttpRequest::builder().method("POST").build()
+    /// Returns the body as bytes.
+    /// 
+    /// **This consumes the HttpRequest**
+    pub async fn body_as_bytes(self) -> anyhow::Result<Bytes> {
+        Ok(self.body.collect().await?.to_bytes())
     }
 }
 
 pub struct HttpRequestBuilder<State> {
     body: Option<BoxBody<Bytes, Error>>,
+    uri: Option<String>,
     method: Option<String>,
     headers: HashMap<String, String>,
+    version: Option<Version>,
     _state: PhantomData<State>
 }
 
-impl HttpRequestBuilder<SetMethod> {
+impl HttpRequestBuilder<SetUri> {
+    pub fn uri(self, uri: impl Into<String>) -> HttpRequestBuilder<SetMethod> {
+        HttpRequestBuilder {
+            body: self.body,
+            uri: Some(uri.into()),
+            method: self.method,
+            headers: self.headers,
+            version: self.version,
+            _state: PhantomData
+        }
+    }
+}
 
+impl HttpRequestBuilder<SetMethod> {
     pub fn method(self, method: impl Into<String>) -> HttpRequestBuilder<Final> {
         HttpRequestBuilder {
             body: self.body,
+            uri: self.uri,
             method: Some(method.into()),
             headers: self.headers,
+            version: self.version,
             _state: PhantomData
         }
     }
@@ -88,8 +114,10 @@ impl HttpRequestBuilder<Final> {
         self
     }
 
-    pub fn build(self) -> HttpRequest {
-        let mut builder = Request::builder().method(self.method.unwrap_or(String::from("GET")).as_str());
+    pub fn build(self) -> anyhow::Result<HttpRequest> {
+        let mut builder = Request::builder()
+        .uri(self.uri.unwrap_or(String::new()))
+        .method(self.method.unwrap_or(String::from("GET")).as_str());
         
         for (key, value) in self.headers.iter() {
             builder = builder.header(key, value);
@@ -104,9 +132,8 @@ impl HttpRequestBuilder<Final> {
             },
         };
 
-        let request = builder.body(body).unwrap();
-
-        HttpRequest::from(request)
+        let request = builder.body(body)?;
+        Ok(HttpRequest::from(request))
     }
 }
 

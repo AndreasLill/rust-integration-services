@@ -1,7 +1,5 @@
 use std::{env::home_dir, time::Duration};
 
-use http_body_util::BodyExt;
-
 use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::HttpServer, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
@@ -18,9 +16,12 @@ async fn http_server_client() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let result = HttpClient::default().request(HttpRequest::get()).send("http://127.0.0.1:8080").await;
+    let request = HttpRequest::builder().uri("http://127.0.0.1:8080").method("GET").build().unwrap();
+    let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
+
     let response = result.unwrap();
+    tracing::info!(?response);
     assert_eq!(response.parts.status.as_u16(), 200);
 }
 
@@ -46,8 +47,8 @@ async fn http_server_client_tls() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let result = HttpClient::default().request(HttpRequest::get()).send("https://127.0.0.1:8080").await;
-    tracing::info!(?result);
+    let request = HttpRequest::builder().uri("https://127.0.0.1:8080").method("GET").build().unwrap();
+    let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
     
     let response = result.unwrap();
@@ -57,30 +58,40 @@ async fn http_server_client_tls() {
 
 #[tokio::test]
 async fn http_client() {
-    let result = HttpClient::default().request(HttpRequest::get()).send("http://httpbin.org/get").await;
+    tracing_subscriber::fmt().init();
+    let request = HttpRequest::builder().uri("http://httpbin.org/get").method("GET").build().unwrap();
+    let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
+
+    let response = result.unwrap();
+    tracing::info!(?response);
 }
 
 #[tokio::test]
 async fn http_client_tls() {
-    let result = HttpClient::default().request(HttpRequest::get()).send("https://httpbin.org/get").await;
+    tracing_subscriber::fmt().init();
+    let request = HttpRequest::builder().uri("https://httpbin.org/get").method("GET").build().unwrap();
+    let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
+
+    let response = result.unwrap();
+    tracing::info!(?response);
 }
 
 #[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::builder().method("GET").header("key", "value").body_bytes("body").build();
+    let request = HttpRequest::builder().uri("https://127.0.0.1").method("GET").header("key", "value").body_bytes("body").build().unwrap();
     assert_eq!(request.parts.method.as_str(), "GET");
     assert_eq!(request.parts.headers.get("key").unwrap(), "value");
-    let body = request.body.collect().await.unwrap().to_bytes();
+    let body = request.body_as_bytes().await.unwrap();
     assert_eq!(body, "body");
 }
 
 #[tokio::test]
 async fn http_response() {
-    let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").build();
+    let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").build().unwrap();
     assert_eq!(response.parts.status.as_u16(), 200);
     assert_eq!(response.parts.headers.get("key").unwrap(), "value");
-    let body = response.body.collect().await.unwrap().to_bytes();
+    let body = response.body_as_bytes().await.unwrap();
     assert_eq!(body, "body");
 }

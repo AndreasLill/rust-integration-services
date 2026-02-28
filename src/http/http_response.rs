@@ -10,7 +10,7 @@ pub struct SetStatus;
 
 #[derive(Debug)]
 pub struct HttpResponse {
-    pub body: BoxBody<Bytes, Error>,
+    body: BoxBody<Bytes, Error>,
     pub parts: hyper::http::response::Parts,
 }
 
@@ -32,23 +32,27 @@ impl HttpResponse {
     }
 
     pub fn ok() -> Self {
-        let body: BoxBody<Bytes, Error> = Some(
-            Empty::new()
-            .map_err(|e| match e {})
-            .boxed()
-        ).unwrap();
-        let res = Response::builder().status(200).body(body).unwrap();
+        let res = HttpResponse::builder().status(200).build().unwrap();
         HttpResponse::from(res)
     }
 
     pub fn internal_server_error() -> Self {
-        let body: BoxBody<Bytes, Error> = Some(
-            Empty::new()
-            .map_err(|e| match e {})
-            .boxed()
-        ).unwrap();
-        let res = Response::builder().status(500).body(body).unwrap();
+        let res = HttpResponse::builder().status(500).build().unwrap();
         HttpResponse::from(res)
+    }
+
+    /// Returns the boxed body stream.
+    ///
+    /// **This consumes the HttpResponse**
+    pub fn body_as_boxed(self) -> BoxBody<Bytes, Error> {
+        self.body
+    }
+
+    /// Returns the body as bytes.
+    /// 
+    /// **This consumes the HttpResponse**
+    pub async fn body_as_bytes(self) -> anyhow::Result<Bytes> {
+        Ok(self.body.collect().await?.to_bytes())
     }
 }
 
@@ -97,7 +101,7 @@ impl HttpResponseBuilder<Final> {
         self
     }
 
-    pub fn build(self) -> HttpResponse {
+    pub fn build(self) -> anyhow::Result<HttpResponse> {
         let mut builder = Response::builder().status(self.status.unwrap());
         
         for (key, value) in self.headers.iter() {
@@ -113,9 +117,8 @@ impl HttpResponseBuilder<Final> {
             },
         };
 
-        let request = builder.body(body).unwrap();
-
-        HttpResponse::from(request)
+        let request = builder.body(body)?;
+        Ok(HttpResponse::from(request))
     }
 }
 
