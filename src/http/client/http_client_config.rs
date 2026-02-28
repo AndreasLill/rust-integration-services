@@ -1,10 +1,9 @@
 use rustls::{ClientConfig, RootCertStore};
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::http::{client::http_client_version::HttpClientVersion, crypto::Crypto};
+use crate::http::crypto::Crypto;
 
 pub struct HttpClientConfig {
-    pub http_version: HttpClientVersion,
     pub tls_config: ClientConfig,
 }
 
@@ -14,7 +13,7 @@ impl HttpClientConfig {
     /// By default, the client trusts the system native root certs in addition to Mozilla root certificates provided by the
     /// [`webpki_roots`](https://docs.rs/webpki-roots) crate.
     /// 
-    pub fn new(version: HttpClientVersion) -> Self {
+    pub fn new() -> Self {
         let mut root_cert_store = RootCertStore::empty();
         root_cert_store.extend(TLS_SERVER_ROOTS.iter().cloned());
         let native_certs = rustls_native_certs::load_native_certs();
@@ -33,14 +32,9 @@ impl HttpClientConfig {
         .with_root_certificates(root_cert_store.clone())
         .with_no_client_auth();
 
-        tls_config.alpn_protocols = match version {
-            HttpClientVersion::Auto => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
-            HttpClientVersion::Http1 => vec![b"http/1.1".to_vec()],
-            HttpClientVersion::Http2 => vec![b"h2".to_vec()],
-        };
+        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
         HttpClientConfig {
-            http_version: version,
             tls_config,
         }
     }

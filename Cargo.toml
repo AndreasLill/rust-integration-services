@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -24,7 +24,7 @@ hyper-util = { version = "0.1.20", optional = true, features = ["full"] }
 hyper-rustls = { version = "0.27.7", optional = true }
 http-body-util = { version = "0.1", optional = true }
 matchit = { version = "0.9.1", optional = true }
-rustls = { version = "0.23.36", optional = true, features = ["ring"] }
+rustls = { version = "0.23.37", optional = true, features = ["ring"] }
 rustls-native-certs = { version = "0.8.3", optional = true }
 tokio-rustls = { version = "0.26.4", optional = true } 
 webpki-roots = { version = "1.0.6", optional = true }
