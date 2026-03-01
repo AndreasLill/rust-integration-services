@@ -1,4 +1,4 @@
-use std::{collections::HashMap, marker::PhantomData};
+use std::marker::PhantomData;
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
@@ -17,9 +17,8 @@ pub struct HttpResponse {
 impl HttpResponse {
     pub fn builder() -> HttpResponseBuilder<SetStatus>  {
         HttpResponseBuilder {
+            builder: Response::builder(),
             body: None,
-            status: None,
-            headers: HashMap::new(),
             _state: PhantomData
         }
     }
@@ -57,19 +56,17 @@ impl HttpResponse {
 }
 
 pub struct HttpResponseBuilder<State> {
+    builder: hyper::http::response::Builder,
     body: Option<BoxBody<Bytes, Error>>,
-    status: Option<u16>,
-    headers: HashMap<String, String>,
     _state: PhantomData<State>
 }
 
 impl HttpResponseBuilder<SetStatus>  {
-
-    pub fn status(self, status: u16) -> HttpResponseBuilder<Final> {
+    pub fn status(mut self, status: u16) -> HttpResponseBuilder<Final> {
+        self.builder = self.builder.status(status);
         HttpResponseBuilder {
+            builder: self.builder,
             body: self.body,
-            status: Some(status.into()),
-            headers: self.headers,
             _state: PhantomData
         }
     }
@@ -97,17 +94,11 @@ impl HttpResponseBuilder<Final> {
     }
 
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.insert(key.into(), value.into());
+        self.builder = self.builder.header(key.into(), value.into());
         self
     }
 
     pub fn build(self) -> anyhow::Result<HttpResponse> {
-        let mut builder = Response::builder().status(self.status.unwrap());
-        
-        for (key, value) in self.headers.iter() {
-            builder = builder.header(key, value);
-        }
-
         let body = match self.body {
             Some(body) => body,
             None => {
@@ -117,7 +108,7 @@ impl HttpResponseBuilder<Final> {
             },
         };
 
-        let request = builder.body(body)?;
+        let request = self.builder.body(body)?;
         Ok(HttpResponse::from(request))
     }
 }

@@ -1,11 +1,9 @@
-use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use http_body_util::{Empty, Full, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
-use hyper::Version;
 use hyper::body::Frame;
 use hyper::{Error, Request, body::Incoming};
 
@@ -22,11 +20,8 @@ pub struct HttpRequest {
 impl HttpRequest {
     pub fn builder() -> HttpRequestBuilder<SetUri>  {
         HttpRequestBuilder {
+            builder: Request::builder(),
             body: None,
-            uri: None,
-            method: None,
-            headers: HashMap::new(),
-            version: None,
             _state: PhantomData
         }
     }
@@ -54,35 +49,28 @@ impl HttpRequest {
 }
 
 pub struct HttpRequestBuilder<State> {
+    builder: hyper::http::request::Builder,
     body: Option<BoxBody<Bytes, Error>>,
-    uri: Option<String>,
-    method: Option<String>,
-    headers: HashMap<String, String>,
-    version: Option<Version>,
     _state: PhantomData<State>
 }
 
 impl HttpRequestBuilder<SetUri> {
-    pub fn uri(self, uri: impl Into<String>) -> HttpRequestBuilder<SetMethod> {
+    pub fn uri(mut self, uri: impl Into<String>) -> HttpRequestBuilder<SetMethod> {
+        self.builder = self.builder.uri(uri.into());
         HttpRequestBuilder {
+            builder: self.builder,
             body: self.body,
-            uri: Some(uri.into()),
-            method: self.method,
-            headers: self.headers,
-            version: self.version,
             _state: PhantomData
         }
     }
 }
 
 impl HttpRequestBuilder<SetMethod> {
-    pub fn method(self, method: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn method(mut self, method: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method(method.into().as_str());
         HttpRequestBuilder {
+            builder: self.builder,
             body: self.body,
-            uri: self.uri,
-            method: Some(method.into()),
-            headers: self.headers,
-            version: self.version,
             _state: PhantomData
         }
     }
@@ -110,19 +98,11 @@ impl HttpRequestBuilder<Final> {
     }
 
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.insert(key.into(), value.into());
+        self.builder = self.builder.header(key.into(), value.into());
         self
     }
 
     pub fn build(self) -> anyhow::Result<HttpRequest> {
-        let mut builder = Request::builder()
-        .uri(self.uri.unwrap_or(String::new()))
-        .method(self.method.unwrap_or(String::from("GET")).as_str());
-        
-        for (key, value) in self.headers.iter() {
-            builder = builder.header(key, value);
-        }
-
         let body = match self.body {
             Some(body) => body,
             None => {
@@ -132,7 +112,7 @@ impl HttpRequestBuilder<Final> {
             },
         };
 
-        let request = builder.body(body)?;
+        let request = self.builder.body(body)?;
         Ok(HttpRequest::from(request))
     }
 }
