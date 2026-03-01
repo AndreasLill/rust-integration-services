@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
-use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
+use http_body_util::{BodyDataStream, BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
 use hyper::{Error, Response, body::{Frame, Incoming}};
 
 pub struct Final;
@@ -40,11 +40,20 @@ impl HttpResponse {
         HttpResponse::from(res)
     }
 
-    /// Returns the boxed body stream.
+    /// Returns the boxed body.
+    /// 
+    /// Used for moving body between requests/responses.
     ///
     /// **This consumes the HttpResponse**
     pub fn body_as_boxed(self) -> BoxBody<Bytes, Error> {
         self.body
+    }
+
+    /// Returns the body data stream.
+    ///
+    /// **This consumes the HttpRequest**
+    pub fn body_as_stream(self) -> BodyDataStream<BoxBody<Bytes, Error>> {
+        self.body.into_data_stream()
     }
 
     /// Returns the body as bytes.
