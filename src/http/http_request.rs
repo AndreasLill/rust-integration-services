@@ -40,7 +40,7 @@ impl HttpRequest {
     /// Used for moving body between requests/responses.
     ///
     /// **This consumes the HttpRequest**
-    pub fn body_as_boxed(self) -> BoxBody<Bytes, Error> {
+    pub fn body(self) -> BoxBody<Bytes, Error> {
         self.body
     }
 
@@ -118,6 +118,11 @@ impl HttpRequestBuilder<SetMethod> {
 }
 
 impl HttpRequestBuilder<Final> {
+
+    pub fn body(mut self, body: BoxBody<Bytes, Error>) -> Self {
+        self.body = Some(body);
+        self
+    }
 
     pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
         self.body = Some(
