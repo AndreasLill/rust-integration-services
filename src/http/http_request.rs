@@ -4,7 +4,9 @@ use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use http_body_util::{BodyDataStream, Empty, Full, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
+use hyper::HeaderMap;
 use hyper::body::Frame;
+use hyper::header::HeaderValue;
 use hyper::{Error, Request, body::Incoming};
 
 pub struct Final;
@@ -14,7 +16,7 @@ pub struct SetUri;
 #[derive(Debug)]
 pub struct HttpRequest {
     body: BoxBody<Bytes, Error>,
-    pub parts: hyper::http::request::Parts,
+    parts: hyper::http::request::Parts,
 }
 
 impl HttpRequest {
@@ -54,6 +56,36 @@ impl HttpRequest {
     /// **This consumes the HttpRequest**
     pub async fn body_as_bytes(self) -> anyhow::Result<Bytes> {
         Ok(self.body.collect().await?.to_bytes())
+    }
+
+    /// Returns the method.
+    pub fn method(&self) -> &str {
+        self.parts.method.as_str()
+    }
+
+    /// Returns the uri host.
+    pub fn host(&self) -> Option<&str> {
+        self.parts.uri.host()
+    }
+
+    /// Returns the uri path.
+    pub fn path(&self) -> &str {
+        self.parts.uri.path()
+    }
+
+    /// Returns the uri port.
+    pub fn port(&self) -> Option<u16> {
+        self.parts.uri.port_u16()
+    }
+
+    /// Returns the uri scheme.
+    pub fn scheme(&self) -> Option<&str> {
+        self.parts.uri.scheme_str()
+    }
+
+    /// Returns all headers.
+    pub fn headers(&self) -> &HeaderMap<HeaderValue> {
+        &self.parts.headers
     }
 }
 
@@ -108,6 +140,13 @@ impl HttpRequestBuilder<Final> {
 
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.builder = self.builder.header(key.into(), value.into());
+        self
+    }
+
+    pub fn headers(mut self, headers: &HeaderMap<HeaderValue>) -> Self {
+        for (key, value) in headers.iter() {
+            self.builder = self.builder.header(key, value);
+        }
         self
     }
 

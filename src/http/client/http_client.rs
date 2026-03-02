@@ -23,12 +23,12 @@ impl HttpClient {
     /// ALPN is used to determine whether to use HTTP/2 or HTTP/1.1 for the request.
     pub async fn send(self, request: HttpRequest) -> anyhow::Result<HttpResponse> {
 
-        let scheme = match request.parts.uri.scheme_str()  {
+        let scheme = match request.scheme()  {
             Some(scheme) => scheme,
             None => return Err(anyhow::anyhow!("URL is missing a scheme.")),
         };
 
-        match request.parts.uri.scheme_str().unwrap_or_default() {
+        match scheme {
             "http" => self.send_tcp(request).await,
             "https" => self.send_tls(request).await,
             _ => Err(anyhow::anyhow!("Unsupported scheme: {}", scheme)),
@@ -37,12 +37,12 @@ impl HttpClient {
 
     
     async fn send_tcp(self, request: HttpRequest) -> anyhow::Result<HttpResponse> {
-        let host = match request.parts.uri.host() {
+        let host = match request.host() {
             Some(host) => host,
             None => return Err(anyhow::anyhow!("Invalid URL.")),
         };
 
-        let port = request.parts.uri.port_u16().unwrap_or(80);
+        let port = request.port().unwrap_or(80);
         
         let stream = TcpStream::connect((host, port)).await?;
         let io = TokioIo::new(stream);
@@ -57,13 +57,13 @@ impl HttpClient {
         Ok(HttpResponse::from(res))
     }
     
-    async fn send_tls(self, mut request: HttpRequest) -> anyhow::Result<HttpResponse> {
-        let host = match request.parts.uri.host() {
+    async fn send_tls(self, request: HttpRequest) -> anyhow::Result<HttpResponse> {
+        let host = match request.host() {
             Some(host) => host,
             None => return Err(anyhow::anyhow!("Invalid URL.")),
         };
 
-        let port = request.parts.uri.port_u16().unwrap_or(443);
+        let port = request.port().unwrap_or(443);
         let domain = rustls::pki_types::ServerName::try_from(host.to_string())?;
 
         let tls_config = self.config.tls_config.clone();
@@ -72,12 +72,12 @@ impl HttpClient {
         let tls_stream = tls_connector.connect(domain, tcp_stream).await?;
 
         let protocol = tls_stream.get_ref().1.alpn_protocol();
-        request.parts.version = match protocol.as_deref() {
+        let version = match protocol.as_deref() {
             Some(b"h2") => Version::HTTP_2,
             _ => Version::HTTP_11,
         };
 
-        match request.parts.version {
+        match version {
             Version::HTTP_2 => {
                 let io = TokioIo::new(tls_stream);
                 let (mut sender, connection) = hyper::client::conn::http2::Builder::new(Executor).handshake(io).await?;
@@ -86,7 +86,9 @@ impl HttpClient {
                     connection.await
                 });
                 
-                let res = sender.send_request(Request::from(request)).await?;
+                let mut hyper_request = Request::from(request);
+                *hyper_request.version_mut() = version;
+                let res = sender.send_request(hyper_request).await?;
                 Ok(HttpResponse::from(res))
             }
             Version::HTTP_11 => {
@@ -97,7 +99,9 @@ impl HttpClient {
                     connection.await
                 });
                 
-                let res = sender.send_request(Request::from(request)).await?;
+                let mut hyper_request = Request::from(request);
+                *hyper_request.version_mut() = version;
+                let res = sender.send_request(hyper_request).await?;
                 Ok(HttpResponse::from(res))
             }
             _ => {

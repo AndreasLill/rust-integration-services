@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use http_body_util::{BodyDataStream, BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
-use hyper::{Error, Response, body::{Frame, Incoming}};
+use hyper::{Error, HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
 
 pub struct Final;
 pub struct SetStatus;
@@ -11,7 +11,7 @@ pub struct SetStatus;
 #[derive(Debug)]
 pub struct HttpResponse {
     body: BoxBody<Bytes, Error>,
-    pub parts: hyper::http::response::Parts,
+    parts: hyper::http::response::Parts,
 }
 
 impl HttpResponse {
@@ -62,6 +62,16 @@ impl HttpResponse {
     pub async fn body_as_bytes(self) -> anyhow::Result<Bytes> {
         Ok(self.body.collect().await?.to_bytes())
     }
+
+    /// Returns the status.
+    pub fn status(&self) -> u16 {
+        self.parts.status.as_u16()
+    }
+
+    /// Returns all headers.
+    pub fn headers(&self) -> &HeaderMap<HeaderValue> {
+        &self.parts.headers
+    }
 }
 
 pub struct HttpResponseBuilder<State> {
@@ -104,6 +114,13 @@ impl HttpResponseBuilder<Final> {
 
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.builder = self.builder.header(key.into(), value.into());
+        self
+    }
+
+    pub fn headers(mut self, headers: &HeaderMap<HeaderValue>) -> Self {
+        for (key, value) in headers.iter() {
+            self.builder = self.builder.header(key, value);
+        }
         self
     }
 
