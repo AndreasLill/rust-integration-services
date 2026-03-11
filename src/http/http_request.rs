@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
@@ -17,6 +18,7 @@ pub struct SetUri;
 pub struct HttpRequest {
     body: BoxBody<Bytes, Error>,
     parts: hyper::http::request::Parts,
+    params: HashMap<String, String>,
 }
 
 impl HttpRequest {
@@ -31,7 +33,16 @@ impl HttpRequest {
     pub fn from_parts(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts) -> HttpRequest {
         HttpRequest {
             body,
-            parts
+            parts,
+            params: HashMap::new()
+        }
+    }
+
+    pub fn from_parts_with_params(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts, params: HashMap<String, String>) -> HttpRequest {
+        HttpRequest {
+            body,
+            parts,
+            params
         }
     }
 
@@ -86,6 +97,11 @@ impl HttpRequest {
     /// Returns all headers.
     pub fn headers(&self) -> &HeaderMap<HeaderValue> {
         &self.parts.headers
+    }
+
+    /// Returns a hashmap with request params.
+    pub fn params(&self) -> &HashMap<String, String> {
+        &self.params
     }
 }
 

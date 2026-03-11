@@ -31,13 +31,23 @@ impl HttpResponse {
     }
 
     pub fn ok() -> Self {
-        let res = HttpResponse::builder().status(200).build().unwrap();
-        HttpResponse::from(res)
+        HttpResponse::builder().status(200).build().unwrap()
+    }
+
+    pub fn bad_request() -> Self {
+        HttpResponse::builder().status(400).build().unwrap()
+    }
+
+    pub fn unauthorized() -> Self {
+        HttpResponse::builder().status(401).build().unwrap()
+    }
+
+    pub fn not_found() -> Self {
+        HttpResponse::builder().status(404).build().unwrap()
     }
 
     pub fn internal_server_error() -> Self {
-        let res = HttpResponse::builder().status(500).build().unwrap();
-        HttpResponse::from(res)
+        HttpResponse::builder().status(500).build().unwrap()
     }
 
     /// Returns the boxed body.

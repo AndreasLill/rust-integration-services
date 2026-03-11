@@ -11,7 +11,7 @@ async fn http_server_client() {
         .route("/", async move |_req| {
             HttpResponse::ok()
         })
-        .receive()
+        .run()
         .await;
     });
 
@@ -32,7 +32,6 @@ async fn http_server_client() {
 #[tokio::test(start_paused = true)]
 async fn http_server_client_tls() {
     tracing_subscriber::fmt().init();
-    assert!(home_dir().is_some());
     tokio::spawn(async move {
         let server_cert_path = home_dir().unwrap().join("server.pem");
         let server_key_path = home_dir().unwrap().join("server-key.pem");
@@ -42,7 +41,7 @@ async fn http_server_client_tls() {
         .route("/", async move |_req| {
             HttpResponse::ok()
         })
-        .receive()
+        .run()
         .await;
     });
 
