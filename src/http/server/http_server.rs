@@ -1,7 +1,7 @@
-use std::{convert::Infallible, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
 use futures::FutureExt;
-use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{Request, Response, body::{Bytes, Incoming}, service::service_fn};
 use hyper_util::rt::TokioIo;
 use matchit::Router;
@@ -35,11 +35,11 @@ impl HttpServer {
         self
     }
 
-    /// Starts the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
+    /// Run the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
     ///
     /// This method binds to the configured host address and enters a loop to accept new TCP connections.
     /// It also listens for system termination signals (SIGINT, SIGTERM) to gracefully shut down the server.
-    pub async fn receive(self) {
+    pub async fn run(self) {
         let tls_acceptor = self.config.tls_config.map(|tls_config| {
             TlsAcceptor::from(Arc::new(tls_config))
         });
@@ -138,19 +138,12 @@ impl HttpServer {
     }
 
     async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
-        /* let (parts, body) = req.into_parts();
-        let response = Response::builder()
-        .status(200)
-        .body(body.boxed())
-        .unwrap();
-
-        Ok(response) */
-
         match router.at(&request.uri().path()) {
             Ok(matched) => {
-                //let = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+                let params: HashMap<String, String> = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
                 let callback = matched.value;
-                let req = HttpRequest::from(request);
+                let (parts, body) = request.into_parts();
+                let req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
                 let callback_fut = callback(req);
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 let response = match result {
@@ -164,7 +157,7 @@ impl HttpServer {
                 Ok(Response::from(response))
             },
             Err(_) => {
-                let response = HttpResponse::internal_server_error();
+                let response = HttpResponse::not_found();
                 Ok(Response::from(response))
             },
         }
