@@ -22,14 +22,16 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
+
+    /// Create a new request using builder.
     pub fn builder() -> HttpRequestBuilder<SetUri>  {
         HttpRequestBuilder {
             builder: Request::builder(),
-            body: None,
             _state: PhantomData
         }
     }
 
+    /// Create a new request from hyper parts.
     pub fn from_parts(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts) -> HttpRequest {
         HttpRequest {
             body,
@@ -38,6 +40,7 @@ impl HttpRequest {
         }
     }
 
+    /// Create a new request from hyper parts with params.
     pub fn from_parts_with_params(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts, params: HashMap<String, String>) -> HttpRequest {
         HttpRequest {
             body,
@@ -107,7 +110,6 @@ impl HttpRequest {
 
 pub struct HttpRequestBuilder<State> {
     builder: hyper::http::request::Builder,
-    body: Option<BoxBody<Bytes, Error>>,
     _state: PhantomData<State>
 }
 
@@ -116,7 +118,6 @@ impl HttpRequestBuilder<SetUri> {
         self.builder = self.builder.uri(uri.into());
         HttpRequestBuilder {
             builder: self.builder,
-            body: self.body,
             _state: PhantomData
         }
     }
@@ -127,7 +128,6 @@ impl HttpRequestBuilder<SetMethod> {
         self.builder = self.builder.method(method.into().as_str());
         HttpRequestBuilder {
             builder: self.builder,
-            body: self.body,
             _state: PhantomData
         }
     }
@@ -135,54 +135,52 @@ impl HttpRequestBuilder<SetMethod> {
 
 impl HttpRequestBuilder<Final> {
 
-    pub fn body(mut self, body: BoxBody<Bytes, Error>) -> Self {
-        self.body = Some(body);
-        self
+    /// Finish the builder and the create the request with an empty body.
+    pub fn body_empty(self) -> anyhow::Result<HttpRequest> {
+        let body = Empty::new().map_err(|e| match e {}).boxed();
+        let request = self.builder.body(body)?;
+        Ok(HttpRequest::from(request))
     }
 
-    pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
-        self.body = Some(
-            Full::from(body.into())
-            .map_err(|e| match e {})
-            .boxed()
-        );
-        self
+    /// Finish the builder and the create the request with a boxed body.
+    /// 
+    /// **Used for moving a body from another request or response.**
+    pub fn body_boxed(self, body: BoxBody<Bytes, Error>) -> anyhow::Result<HttpRequest> {
+        let request = self.builder.body(body)?;
+        Ok(HttpRequest::from(request))
     }
 
-    pub fn body_stream<S>(mut self, stream: S) -> Self
+    /// Finish the builder and the create the request with a body of bytes in memory.
+    pub fn body_bytes(self, body: impl Into<Bytes>) -> anyhow::Result<HttpRequest> {
+        let body = Full::from(body.into()).map_err(|e| match e {}).boxed();
+        let request = self.builder.body(body)?;
+        Ok(HttpRequest::from(request))
+    }
+
+    /// Finish the builder and the create the request with a body of bytes as a stream.
+    pub fn body_stream<S>(self, stream: S) -> anyhow::Result<HttpRequest>
     where
         S: Stream<Item = Result<Bytes, hyper::Error>> + Send + Sync + 'static,
     {
         let frame_stream = stream.map_ok(Frame::data);
         let body = StreamBody::new(frame_stream);
-        self.body = Some(BodyExt::boxed(body));
-        self
+        let body_ext = BodyExt::boxed(body);
+        let request = self.builder.body(body_ext)?;
+        Ok(HttpRequest::from(request))
     }
 
+    /// Add a header to the request.
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.builder = self.builder.header(key.into(), value.into());
         self
     }
 
+    /// Copy headers from another request or response.
     pub fn headers(mut self, headers: &HeaderMap<HeaderValue>) -> Self {
         for (key, value) in headers.iter() {
             self.builder = self.builder.header(key, value);
         }
         self
-    }
-
-    pub fn build(self) -> anyhow::Result<HttpRequest> {
-        let body = match self.body {
-            Some(body) => body,
-            None => {
-                Empty::new()
-                .map_err(|e| match e {})
-                .boxed()
-            },
-        };
-
-        let request = self.builder.body(body)?;
-        Ok(HttpRequest::from(request))
     }
 }
 

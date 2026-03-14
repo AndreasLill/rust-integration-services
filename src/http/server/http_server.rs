@@ -150,14 +150,14 @@ impl HttpServer {
                     Ok(res) => res,
                     Err(err) => {
                         tracing::error!("{:?}", err);
-                        HttpResponse::internal_server_error()
+                        HttpResponse::builder().status(500).body_empty().unwrap()
                     }
                 };
 
                 Ok(Response::from(response))
             },
             Err(_) => {
-                let response = HttpResponse::not_found();
+                let response = HttpResponse::builder().status(404).body_empty().unwrap();
                 Ok(Response::from(response))
             },
         }
