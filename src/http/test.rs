@@ -9,14 +9,14 @@ async fn http_server_client() {
         let config = HttpServerConfig::new("127.0.0.1", 8080);
         HttpServer::new(config)
         .route("/", async move |_req| {
-            HttpResponse::ok()
+            HttpResponse::builder().status(200).body_empty().unwrap()
         })
         .run()
         .await;
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().uri("http://127.0.0.1:8080").method("GET").build().unwrap();
+    let request = HttpRequest::builder().uri("http://127.0.0.1:8080").method("GET").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -39,14 +39,14 @@ async fn http_server_client_tls() {
         let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
         HttpServer::new(config)
         .route("/", async move |_req| {
-            HttpResponse::ok()
+            HttpResponse::builder().status(200).body_empty().unwrap()
         })
         .run()
         .await;
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().uri("https://127.0.0.1:8080").method("GET").build().unwrap();
+    let request = HttpRequest::builder().uri("https://127.0.0.1:8080").method("GET").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
     
@@ -58,7 +58,7 @@ async fn http_server_client_tls() {
 #[tokio::test]
 async fn http_client() {
     tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().uri("http://httpbin.org/get").method("GET").build().unwrap();
+    let request = HttpRequest::builder().uri("http://httpbin.org/get").method("GET").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -69,7 +69,7 @@ async fn http_client() {
 #[tokio::test]
 async fn http_client_tls() {
     tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().uri("https://httpbin.org/get").method("GET").build().unwrap();
+    let request = HttpRequest::builder().uri("https://httpbin.org/get").method("GET").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -79,7 +79,7 @@ async fn http_client_tls() {
 
 #[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::builder().uri("https://127.0.0.1").method("GET").header("key", "value").body_bytes("body").build().unwrap();
+    let request = HttpRequest::builder().uri("https://127.0.0.1").method("GET").header("key", "value").body_bytes("body").unwrap();
     assert_eq!(request.method(), "GET");
     assert_eq!(request.headers().get("key").unwrap(), "value");
     let body = request.body_as_bytes().await.unwrap();
@@ -88,7 +88,7 @@ async fn http_request() {
 
 #[tokio::test]
 async fn http_response() {
-    let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").build().unwrap();
+    let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers().get("key").unwrap(), "value");
     let body = response.body_as_bytes().await.unwrap();

@@ -15,39 +15,21 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
+
+    /// Create a new response using builder.
     pub fn builder() -> HttpResponseBuilder<SetStatus>  {
         HttpResponseBuilder {
             builder: Response::builder(),
-            body: None,
             _state: PhantomData
         }
     }
 
+    /// Create a new response from hyper parts.
     pub fn from_parts(body: BoxBody<Bytes, Error>, parts: hyper::http::response::Parts) -> HttpResponse {
         HttpResponse {
             body,
             parts
         }
-    }
-
-    pub fn ok() -> Self {
-        HttpResponse::builder().status(200).build().unwrap()
-    }
-
-    pub fn bad_request() -> Self {
-        HttpResponse::builder().status(400).build().unwrap()
-    }
-
-    pub fn unauthorized() -> Self {
-        HttpResponse::builder().status(401).build().unwrap()
-    }
-
-    pub fn not_found() -> Self {
-        HttpResponse::builder().status(404).build().unwrap()
-    }
-
-    pub fn internal_server_error() -> Self {
-        HttpResponse::builder().status(500).build().unwrap()
     }
 
     /// Returns the boxed body.
@@ -86,7 +68,6 @@ impl HttpResponse {
 
 pub struct HttpResponseBuilder<State> {
     builder: hyper::http::response::Builder,
-    body: Option<BoxBody<Bytes, Error>>,
     _state: PhantomData<State>
 }
 
@@ -95,7 +76,6 @@ impl HttpResponseBuilder<SetStatus>  {
         self.builder = self.builder.status(status);
         HttpResponseBuilder {
             builder: self.builder,
-            body: self.body,
             _state: PhantomData
         }
     }
@@ -103,54 +83,52 @@ impl HttpResponseBuilder<SetStatus>  {
 
 impl HttpResponseBuilder<Final> {
 
-    pub fn body(mut self, body: BoxBody<Bytes, Error>) -> Self {
-        self.body = Some(body);
-        self
+    /// Finish the builder and the create the response with an empty body.
+    pub fn body_empty(self) -> anyhow::Result<HttpResponse> {
+        let body = Empty::new().map_err(|e| match e {}).boxed();
+        let response = self.builder.body(body)?;
+        Ok(HttpResponse::from(response))
     }
 
-    pub fn body_bytes(mut self, body: impl Into<Bytes>) -> Self {
-        self.body = Some(
-            Full::from(body.into())
-            .map_err(|e| match e {})
-            .boxed()
-        );
-        self
+    /// Finish the builder and the create the response with a boxed body.
+    /// 
+    /// **Used for moving a body from another request or response.**
+    pub fn body_boxed(self, body: BoxBody<Bytes, Error>) -> anyhow::Result<HttpResponse> {
+        let response = self.builder.body(body)?;
+        Ok(HttpResponse::from(response))
     }
 
-    pub fn body_stream<S>(mut self, stream: S) -> Self
+    /// Finish the builder and the create the response with a body of bytes in memory.
+    pub fn body_bytes(self, body: impl Into<Bytes>) -> anyhow::Result<HttpResponse> {
+        let body = Full::from(body.into()).map_err(|e| match e {}).boxed();
+        let response = self.builder.body(body)?;
+        Ok(HttpResponse::from(response))
+    }
+
+    /// Finish the builder and the create the response with a body of bytes as a stream.
+    pub fn body_stream<S>(self, stream: S) -> anyhow::Result<HttpResponse>
     where
         S: Stream<Item = Result<Bytes, hyper::Error>> + Send + Sync + 'static,
     {
         let frame_stream = stream.map_ok(Frame::data);
         let body = StreamBody::new(frame_stream);
-        self.body = Some(BodyExt::boxed(body));
-        self
+        let body_ext = BodyExt::boxed(body);
+        let response = self.builder.body(body_ext)?;
+        Ok(HttpResponse::from(response))
     }
 
+    /// Add a header to the response.
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.builder = self.builder.header(key.into(), value.into());
         self
     }
 
+    /// Copy headers from another request or response.
     pub fn headers(mut self, headers: &HeaderMap<HeaderValue>) -> Self {
         for (key, value) in headers.iter() {
             self.builder = self.builder.header(key, value);
         }
         self
-    }
-
-    pub fn build(self) -> anyhow::Result<HttpResponse> {
-        let body = match self.body {
-            Some(body) => body,
-            None => {
-                Empty::new()
-                .map_err(|e| match e {})
-                .boxed()
-            },
-        };
-
-        let request = self.builder.body(body)?;
-        Ok(HttpResponse::from(request))
     }
 }
 
