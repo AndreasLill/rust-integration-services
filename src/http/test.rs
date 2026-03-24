@@ -16,7 +16,7 @@ async fn http_server_client() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().uri("http://127.0.0.1:8080").method("GET").body_empty().unwrap();
+    let request = HttpRequest::builder().get("http://127.0.0.1:8080").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -46,7 +46,7 @@ async fn http_server_client_tls() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().uri("https://127.0.0.1:8080").method("GET").body_empty().unwrap();
+    let request = HttpRequest::builder().get("https://127.0.0.1:8080").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
     
@@ -58,7 +58,7 @@ async fn http_server_client_tls() {
 #[tokio::test]
 async fn http_client() {
     tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().uri("http://httpbin.org/get").method("GET").body_empty().unwrap();
+    let request = HttpRequest::builder().get("http://httpbin.org/get").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -69,7 +69,7 @@ async fn http_client() {
 #[tokio::test]
 async fn http_client_tls() {
     tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().uri("https://httpbin.org/get").method("GET").body_empty().unwrap();
+    let request = HttpRequest::builder().get("https://httpbin.org/get").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -79,7 +79,7 @@ async fn http_client_tls() {
 
 #[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::builder().uri("https://127.0.0.1").method("GET").header("key", "value").body_bytes("body").unwrap();
+    let request = HttpRequest::builder().get("https://127.0.0.1").header("key", "value").body_bytes("body").unwrap();
     assert_eq!(request.method(), "GET");
     assert_eq!(request.headers().get("key").unwrap(), "value");
     let body = request.body_as_bytes().await.unwrap();

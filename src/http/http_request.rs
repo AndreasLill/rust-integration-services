@@ -12,7 +12,6 @@ use hyper::{Error, Request, body::Incoming};
 
 pub struct Final;
 pub struct SetMethod;
-pub struct SetUri;
 
 #[derive(Debug)]
 pub struct HttpRequest {
@@ -24,7 +23,7 @@ pub struct HttpRequest {
 impl HttpRequest {
 
     /// Create a new request using builder.
-    pub fn builder() -> HttpRequestBuilder<SetUri>  {
+    pub fn builder() -> HttpRequestBuilder<SetMethod>  {
         HttpRequestBuilder {
             builder: Request::builder(),
             _state: PhantomData
@@ -113,19 +112,82 @@ pub struct HttpRequestBuilder<State> {
     _state: PhantomData<State>
 }
 
-impl HttpRequestBuilder<SetUri> {
-    pub fn uri(mut self, uri: impl Into<String>) -> HttpRequestBuilder<SetMethod> {
-        self.builder = self.builder.uri(uri.into());
+impl HttpRequestBuilder<SetMethod> {
+    /// Sets the HTTP method to `GET` and assigns the request URI.
+    pub fn get(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("GET").uri(uri.into());
         HttpRequestBuilder {
             builder: self.builder,
             _state: PhantomData
         }
     }
-}
 
-impl HttpRequestBuilder<SetMethod> {
-    pub fn method(mut self, method: impl Into<String>) -> HttpRequestBuilder<Final> {
-        self.builder = self.builder.method(method.into().as_str());
+    /// Sets the HTTP method to `POST` and assigns the request URI.
+    pub fn post(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("POST").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `PUT` and assigns the request URI.
+    pub fn put(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("PUT").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `PATCH` and assigns the request URI.
+    pub fn patch(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("PATCH").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `DELETE` and assigns the request URI.
+    pub fn delete(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("DELETE").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `OPTIONS` and assigns the request URI.
+    pub fn options(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("OPTIONS").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `HEAD` and assigns the request URI.
+    pub fn head(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("OPTIONS").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `CONNECT` and assigns the request URI.
+    pub fn connect(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("CONNECT").uri(uri.into());
+        HttpRequestBuilder {
+            builder: self.builder,
+            _state: PhantomData
+        }
+    }
+
+    /// Sets the HTTP method to `TRACE` and assigns the request URI.
+    pub fn trace(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+        self.builder = self.builder.method("TRACE").uri(uri.into());
         HttpRequestBuilder {
             builder: self.builder,
             _state: PhantomData
