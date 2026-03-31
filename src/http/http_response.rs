@@ -1,9 +1,12 @@
 use std::marker::PhantomData;
 
+use anyhow::Error;
 use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
-use http_body_util::{BodyDataStream, BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
-use hyper::{Error, HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
+use futures::StreamExt;
+use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
+use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
+
+use crate::common::stream::ByteStream;
 
 pub struct Final;
 pub struct SetStatus;
@@ -37,22 +40,9 @@ impl HttpResponse {
     /// Used for moving body between requests/responses.
     ///
     /// **This consumes the HttpResponse**
-    pub fn body(self) -> BoxBody<Bytes, Error> {
-        self.body
-    }
-
-    /// Returns the body data stream.
-    ///
-    /// **This consumes the HttpRequest**
-    pub fn body_as_stream(self) -> BodyDataStream<BoxBody<Bytes, Error>> {
-        self.body.into_data_stream()
-    }
-
-    /// Returns the body as bytes.
-    /// 
-    /// **This consumes the HttpResponse**
-    pub async fn body_as_bytes(self) -> anyhow::Result<Bytes> {
-        Ok(self.body.collect().await?.to_bytes())
+    pub fn body(self) -> ByteStream {
+        let stream = self.body.into_data_stream();
+        ByteStream::new(Box::pin(stream))
     }
 
     /// Returns the status.
@@ -106,14 +96,11 @@ impl HttpResponseBuilder<Final> {
     }
 
     /// Finish the builder and the create the response with a body of bytes as a stream.
-    pub fn body_stream<S>(self, stream: S) -> anyhow::Result<HttpResponse>
-    where
-        S: Stream<Item = Result<Bytes, hyper::Error>> + Send + Sync + 'static,
-    {
-        let frame_stream = stream.map_ok(Frame::data);
-        let body = StreamBody::new(frame_stream);
-        let body_ext = BodyExt::boxed(body);
-        let response = self.builder.body(body_ext)?;
+    pub fn body_stream<S>(self, stream: ByteStream) -> anyhow::Result<HttpResponse> {
+        let mapped_stream = stream.as_stream().map(|res| res.map(Frame::data));
+        let body = StreamBody::new(mapped_stream);
+        let boxed_body: BoxBody<Bytes, Error> = BodyExt::boxed(body);
+        let response: Response<BoxBody<Bytes, Error>> = self.builder.body(boxed_body)?;
         Ok(HttpResponse::from(response))
     }
 
@@ -148,6 +135,7 @@ impl From<Response<BoxBody<Bytes, Error>>> for HttpResponse {
 impl From<Response<Incoming>> for HttpResponse {
     fn from(req: Response<Incoming>) -> Self {
         let (parts, body) = req.into_parts();
+        let body = body.map_err(|e| anyhow::Error::from(e));
         HttpResponse::from_parts(body.boxed(), parts)
     }
 }

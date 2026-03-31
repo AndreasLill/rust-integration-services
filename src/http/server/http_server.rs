@@ -137,12 +137,13 @@ impl HttpServer {
         }
     }
 
-    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
+    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
         match router.at(&request.uri().path()) {
             Ok(matched) => {
                 let params: HashMap<String, String> = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
                 let callback = matched.value;
                 let (parts, body) = request.into_parts();
+                let body = body.map_err(|e| anyhow::Error::from(e));
                 let req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
                 let callback_fut = callback(req);
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;

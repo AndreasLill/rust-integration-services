@@ -82,7 +82,7 @@ async fn http_request() {
     let request = HttpRequest::builder().get("https://127.0.0.1").header("key", "value").body_bytes("body").unwrap();
     assert_eq!(request.method(), "GET");
     assert_eq!(request.headers().get("key").unwrap(), "value");
-    let body = request.body_as_bytes().await.unwrap();
+    let body = request.body().as_bytes().await.unwrap();
     assert_eq!(body, "body");
 }
 
@@ -91,6 +91,6 @@ async fn http_response() {
     let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers().get("key").unwrap(), "value");
-    let body = response.body_as_bytes().await.unwrap();
+    let body = response.body().as_bytes().await.unwrap();
     assert_eq!(body, "body");
 }

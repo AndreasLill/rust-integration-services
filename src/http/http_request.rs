@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
+use anyhow::Error;
 use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
-use http_body_util::{BodyDataStream, Empty, Full, StreamBody};
+use futures::StreamExt;
+use http_body_util::{Empty, Full, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::HeaderMap;
 use hyper::body::Frame;
 use hyper::header::HeaderValue;
-use hyper::{Error, Request, body::Incoming};
+use hyper::{Request, body::Incoming};
+
+use crate::common::stream::ByteStream;
 
 pub struct Final;
 pub struct SetMethod;
@@ -53,22 +56,9 @@ impl HttpRequest {
     /// Used for moving body between requests/responses.
     ///
     /// **This consumes the HttpRequest**
-    pub fn body(self) -> BoxBody<Bytes, Error> {
-        self.body
-    }
-
-    /// Returns the body data stream.
-    ///
-    /// **This consumes the HttpRequest**
-    pub fn body_as_stream(self) -> BodyDataStream<BoxBody<Bytes, Error>> {
-        self.body.into_data_stream()
-    }
-
-    /// Returns the body as bytes.
-    /// 
-    /// **This consumes the HttpRequest**
-    pub async fn body_as_bytes(self) -> anyhow::Result<Bytes> {
-        Ok(self.body.collect().await?.to_bytes())
+    pub fn body(self) -> ByteStream {
+        let stream = self.body.into_data_stream();
+        ByteStream::new(Box::pin(stream))
     }
 
     /// Returns the method.
@@ -204,14 +194,6 @@ impl HttpRequestBuilder<Final> {
         Ok(HttpRequest::from(request))
     }
 
-    /// Finish the builder and the create the request with a boxed body.
-    /// 
-    /// **Used for moving a body from another request or response.**
-    pub fn body_boxed(self, body: BoxBody<Bytes, Error>) -> anyhow::Result<HttpRequest> {
-        let request = self.builder.body(body)?;
-        Ok(HttpRequest::from(request))
-    }
-
     /// Finish the builder and the create the request with a body of bytes in memory.
     pub fn body_bytes(self, body: impl Into<Bytes>) -> anyhow::Result<HttpRequest> {
         let body = Full::from(body.into()).map_err(|e| match e {}).boxed();
@@ -220,14 +202,11 @@ impl HttpRequestBuilder<Final> {
     }
 
     /// Finish the builder and the create the request with a body of bytes as a stream.
-    pub fn body_stream<S>(self, stream: S) -> anyhow::Result<HttpRequest>
-    where
-        S: Stream<Item = Result<Bytes, hyper::Error>> + Send + Sync + 'static,
-    {
-        let frame_stream = stream.map_ok(Frame::data);
-        let body = StreamBody::new(frame_stream);
-        let body_ext = BodyExt::boxed(body);
-        let request = self.builder.body(body_ext)?;
+    pub fn body_stream<S>(self, stream: ByteStream) -> anyhow::Result<HttpRequest> {
+        let mapped_stream = stream.as_stream().map(|res| res.map(Frame::data));
+        let body = StreamBody::new(mapped_stream);
+        let boxed_body: BoxBody<Bytes, Error> = BodyExt::boxed(body);
+        let request: Request<BoxBody<Bytes, Error>> = self.builder.body(boxed_body)?;
         Ok(HttpRequest::from(request))
     }
 
@@ -262,6 +241,7 @@ impl From<Request<BoxBody<Bytes, Error>>> for HttpRequest {
 impl From<Request<Incoming>> for HttpRequest {
     fn from(req: Request<Incoming>) -> Self {
         let (parts, body) = req.into_parts();
+        let body = body.map_err(|e| anyhow::Error::from(e));
         HttpRequest::from_parts(body.boxed(), parts)
     }
 }
