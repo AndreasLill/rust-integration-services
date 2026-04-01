@@ -1,23 +1,24 @@
-use std::{error::Error, pin::Pin};
+use std::pin::Pin;
 
+use anyhow::Error;
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 
 pub struct ByteStream(
-    Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn Error + Send + Sync>>> + Send + Sync>>
+    Pin<Box<dyn Stream<Item = Result<Bytes, Error>> + Send + Sync>>
 );
 
 impl ByteStream {
     pub fn new<S, E>(stream: S) -> Self
     where 
         S: Stream<Item = Result<Bytes, E>> + Send + Sync + 'static,
-        E: Into<Box<dyn Error + Send + Sync>> + 'static,
+        E: Into<Error> + 'static,
     {
         let stream = stream.map(|res| res.map_err(Into::into));
         Self(Box::pin(stream))
     }
 
-    pub fn as_stream(self) -> Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn Error + Send + Sync>>> + Send + Sync>> {
+    pub fn as_stream(self) -> Pin<Box<dyn Stream<Item = Result<Bytes, Error>> + Send + Sync>> {
         self.0
     }
 
