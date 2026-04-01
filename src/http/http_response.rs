@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use anyhow::Error;
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
 use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
 
@@ -96,8 +96,8 @@ impl HttpResponseBuilder<Final> {
     }
 
     /// Finish the builder and the create the response with a body of bytes as a stream.
-    pub fn body_stream(self, stream: impl Stream<Item = Result<Bytes, anyhow::Error>> + Send + Sync + 'static) -> anyhow::Result<HttpResponse> {
-        let mapped_stream = stream.map(|res| res.map(Frame::data));
+    pub fn body_stream(self, stream: ByteStream) -> anyhow::Result<HttpResponse> {
+        let mapped_stream = stream.as_stream().map(|res| { res.map(Frame::data) });
         let body = StreamBody::new(mapped_stream);
         let boxed_body: BoxBody<Bytes, Error> = BodyExt::boxed(body);
         let response: Response<BoxBody<Bytes, Error>> = self.builder.body(boxed_body)?;
