@@ -1,4 +1,4 @@
-use crate::s3::{s3_client::S3Client, s3_client_config::S3ClientConfig};
+use crate::{common::stream::ByteStream, s3::{s3_client::S3Client, s3_client_config::S3ClientConfig}};
 
 #[tokio::test]
 async fn client_test() {
@@ -8,27 +8,23 @@ async fn client_test() {
     .secret_key("minioadmin");
     let client = S3Client::new(config);
 
-    let result = client.bucket("test").put_object_bytes("file_test.txt", "text").await;
-    tracing::info!("{:?}", result);
+    let result = client.bucket("test").put_object("test.txt").from_bytes("bytes").await;
     assert!(result.is_ok());
 
-    let result = client.bucket("test").get_object("file_test.txt", "/tmp").await;
+    let result = client.bucket("test").get_object("test.txt").as_bytes().await;
+    assert!(result.is_ok());
     tracing::info!("{:?}", result);
+
+    let result = client.bucket("test").delete_object("test.txt").await;
     assert!(result.is_ok());
 
-    let result = client.bucket("test").get_object_bytes("file_test.txt").await;
-    tracing::info!("{:?}", result);
+    let result = client.bucket("test").put_object("test.txt").from_stream(ByteStream::from("bytestream")).await;
     assert!(result.is_ok());
 
-    let result = client.bucket("test").get_objects("/tmp").await;
-    tracing::info!("{:?}", result);
+    let result = client.bucket("test").get_object("test.txt").as_stream().await;
     assert!(result.is_ok());
+    tracing::info!("{:?}", result.unwrap().as_bytes().await);
 
-    let result = client.bucket("test").get_objects_with_regex("/tmp", "^file_test.*$").await;
-    tracing::info!("{:?}", result);
-    assert!(result.is_ok());
-
-    let result = client.bucket("test").delete_object("file_test.txt").await;
-    tracing::info!("{:?}", result);
+    let result = client.bucket("test").delete_object("test.txt").await;
     assert!(result.is_ok());
 }

@@ -34,3 +34,31 @@ impl ByteStream {
         Ok(buffer.freeze())
     }
 }
+
+impl From<Bytes> for ByteStream {
+    fn from(bytes: Bytes) -> Self {
+        let stream = futures::stream::once(async move { 
+            Ok::<Bytes, Error>(bytes) 
+        });
+
+        Self(Box::pin(stream))
+    }
+}
+
+impl From<Vec<u8>> for ByteStream {
+    fn from(v: Vec<u8>) -> Self {
+        Self::from(Bytes::from(v))
+    }
+}
+
+impl From<String> for ByteStream {
+    fn from(s: String) -> Self {
+        Self::from(Bytes::from(s))
+    }
+}
+
+impl From<&str> for ByteStream {
+    fn from(s: &str) -> Self {
+        Self::from(Bytes::copy_from_slice(s.as_bytes()))
+    }
+}
