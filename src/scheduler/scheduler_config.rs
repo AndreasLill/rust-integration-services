@@ -1,9 +1,7 @@
-use time::{Date, OffsetDateTime, Time};
-
-use crate::scheduler::scheduler_interval::SchedulerInterval;
+use time::{Date, Duration, OffsetDateTime, Time};
 
 pub struct SchedulerConfig {
-    pub interval: SchedulerInterval,
+    pub interval: Option<Duration>,
     pub start_date: Date,
     pub start_time: Time,
 }
@@ -11,15 +9,15 @@ pub struct SchedulerConfig {
 impl SchedulerConfig {
     pub fn new() -> Self {
         SchedulerConfig {
-            interval: SchedulerInterval::None,
+            interval: None,
             start_date: OffsetDateTime::now_utc().date(),
             start_time: OffsetDateTime::now_utc().time(),
         }
     }
 
     /// Sets the interval of how frequently the task should run.
-    pub fn interval(mut self, interval: SchedulerInterval) -> Self {
-        self.interval = interval;
+    pub fn interval(mut self, interval: Duration) -> Self {
+        self.interval = Some(interval);
         self
     }
 
