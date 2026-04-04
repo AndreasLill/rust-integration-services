@@ -33,6 +33,14 @@ impl ByteStream {
 
         Ok(buffer.freeze())
     }
+
+    pub async fn next(&mut self) -> Option<anyhow::Result<Bytes>> {
+        match self.0.next().await {
+            Some(Ok(bytes)) => Some(Ok(bytes)),
+            Some(Err(e)) => Some(Err(e)),
+            None => None,
+        }
+    }
 }
 
 impl From<Bytes> for ByteStream {
