@@ -27,7 +27,7 @@ impl ByteStream {
         let mut buffer = BytesMut::new();
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| anyhow::anyhow!(e))?;
+            let chunk = chunk?;
             buffer.extend_from_slice(&chunk);
         }
 
