@@ -13,7 +13,6 @@ pub struct Copy;
 pub struct Move;
 
 pub struct FileClient<State> {
-    overwrite: bool,
     path: Option<PathBuf>,
     _state: PhantomData<State>,
 }
@@ -21,7 +20,6 @@ pub struct FileClient<State> {
 impl FileClient<Empty> {
     pub fn new() -> Self {
         FileClient  {
-            overwrite: false,
             path: None,
             _state: PhantomData
         }
@@ -29,7 +27,6 @@ impl FileClient<Empty> {
 
     pub fn write_to(&self, path: impl Into<PathBuf>) -> FileClient<Write> {
         FileClient {
-            overwrite: self.overwrite,
             path: Some(path.into()),
             _state: PhantomData
         }
@@ -37,7 +34,6 @@ impl FileClient<Empty> {
 
     pub fn read_from(&self, path: impl Into<PathBuf>) -> FileClient<Read> {
         FileClient {
-            overwrite: self.overwrite,
             path: Some(path.into()),
             _state: PhantomData
         }
@@ -45,7 +41,6 @@ impl FileClient<Empty> {
 
     pub fn copy_from(&self, path: impl Into<PathBuf>) -> FileClient<Copy> {
         FileClient {
-            overwrite: self.overwrite,
             path: Some(path.into()),
             _state: PhantomData
         }
@@ -53,7 +48,6 @@ impl FileClient<Empty> {
 
     pub fn move_from(&self, path: impl Into<PathBuf>) -> FileClient<Move> {
         FileClient {
-            overwrite: self.overwrite,
             path: Some(path.into()),
             _state: PhantomData
         }
