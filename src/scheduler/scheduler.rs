@@ -6,8 +6,6 @@ use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 
 use crate::scheduler::scheduler_config::SchedulerConfig;
 
-use super::scheduler_interval::SchedulerInterval;
-
 type TriggerCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 pub struct Scheduler {
@@ -36,7 +34,7 @@ impl Scheduler {
         self
     }
 
-    pub async fn receive(mut self) {
+    pub async fn run(mut self) {
         let mut receiver_join_set = JoinSet::new();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
@@ -55,7 +53,7 @@ impl Scheduler {
                     sleep(Self::to_std_duration(duration)).await;
                 }
                 
-                if self.config.interval != SchedulerInterval::None {
+                if self.config.interval != None {
                     self.next_run = Self::calculate_next_run(self.next_run, self.config.interval).await;
                 }
 
@@ -65,7 +63,7 @@ impl Scheduler {
                     tracing::trace!("{:?}", err);
                 }
                 
-                if self.config.interval == SchedulerInterval::None {
+                if self.config.interval == None {
                     break;
                 }
 
@@ -94,23 +92,18 @@ impl Scheduler {
         tracing::trace!("shut down complete");
     }
 
-    async fn calculate_next_run(next_run: OffsetDateTime, interval: SchedulerInterval) -> OffsetDateTime {
-        let now = OffsetDateTime::now_utc();
-
-        let interval_duration = match interval {
-            SchedulerInterval::None => return next_run,
-            SchedulerInterval::Seconds(seconds) => Duration::seconds(seconds),
-            SchedulerInterval::Minutes(minutes) => Duration::minutes(minutes),
-            SchedulerInterval::Hours(hours) => Duration::hours(hours),
-            SchedulerInterval::Days(days) => Duration::days(days),
-        };
-
-        let mut calculated_next_run = next_run.clone();
-        while calculated_next_run < now {
-            calculated_next_run += interval_duration;
+    async fn calculate_next_run(next_run: OffsetDateTime, interval: Option<Duration>) -> OffsetDateTime {
+        
+        if let Some(duration) = interval {
+            let now = OffsetDateTime::now_utc();
+            let mut calculated_next_run = next_run;
+            while calculated_next_run < now {
+                calculated_next_run += duration;
+            }
+            return calculated_next_run;
         }
 
-        calculated_next_run
+        next_run
     }
 
     fn to_std_duration(duration: Duration) -> std::time::Duration {
