@@ -18,7 +18,7 @@ impl ByteStream {
         Self(Box::pin(stream))
     }
 
-    pub fn as_stream(self) -> Pin<Box<dyn Stream<Item = Result<Bytes, Error>> + Send + Sync>> {
+    pub fn inner_stream(self) -> Pin<Box<dyn Stream<Item = Result<Bytes, Error>> + Send + Sync>> {
         self.0
     }
 

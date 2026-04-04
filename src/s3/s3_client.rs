@@ -3,7 +3,6 @@ use std::{marker::PhantomData, sync::Arc};
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_s3::{Client, config::{Credentials, SharedCredentialsProvider}, types::{CompletedMultipartUpload, CompletedPart}};
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
 use tokio_util::io::ReaderStream;
 
 use crate::{common::stream::ByteStream, s3::s3_client_config::S3ClientConfig};
@@ -154,16 +153,15 @@ impl S3Client<PutObject> {
         Ok(())
     }
 
-    async fn multipart_upload(&self, upload_id: &str, stream: ByteStream) -> anyhow::Result<()> {
+    async fn multipart_upload(&self, upload_id: &str, mut stream: ByteStream) -> anyhow::Result<()> {
         let bucket = self.bucket.as_ref().unwrap();
         let key = self.key.as_ref().unwrap();
         let min_part_size: usize = 5 * 1024 * 1024;
         let mut completed_parts = Vec::new();
         let mut part_number = 1;
         let mut buffer = BytesMut::with_capacity(min_part_size);
-        let mut raw_stream = stream.as_stream();
 
-        while let Some(chunk) = raw_stream.next().await {
+        while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             buffer.extend_from_slice(&chunk);
 
