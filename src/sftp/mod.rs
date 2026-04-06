@@ -1,6 +1,4 @@
 #[cfg(feature = "sftp")]
-mod sftp;
-#[cfg(feature = "sftp")]
 mod sftp_auth_basic;
 #[cfg(feature = "sftp")]
 mod sftp_auth_private_key;
