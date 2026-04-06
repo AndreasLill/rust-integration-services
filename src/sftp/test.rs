@@ -4,7 +4,7 @@ use crate::{common::stream::ByteStream, sftp::{sftp_client::SftpClient, sftp_cli
 async fn client_test() {
     tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
     let config = SftpClientConfig::builder().endpoint("127.0.0.1:2222").auth_basic("user", "password").build().unwrap();
-    let client = SftpClient::new(config);
+    let mut client = SftpClient::new(config);
 
     let result = client.put_file("upload/file_bytes.txt").from_bytes("hello world").await;
     assert!(result.is_ok());

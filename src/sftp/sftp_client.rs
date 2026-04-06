@@ -1,9 +1,10 @@
 use std::{marker::PhantomData, path::{Path, PathBuf}, sync::Arc};
 
+use anyhow::Ok;
 use bytes::Bytes;
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
+use russh::{client::Handle, keys::{HashAlg, PrivateKeyWithHashAlg}};
 use russh_sftp::client::SftpSession;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::Mutex};
 use tokio_util::io::ReaderStream;
 
 use crate::{common::stream::ByteStream, sftp::{sftp_client_config::SftpClientConfig, ssh_client::SshClient}};
@@ -15,6 +16,7 @@ pub struct PutFile;
 pub struct SftpClient<State> {
     config: Arc<SftpClientConfig>,
     path: Option<PathBuf>,
+    session: Arc<Mutex<Option<Handle<SshClient>>>>,
     _state: PhantomData<State>,
 }
 
@@ -23,6 +25,7 @@ impl SftpClient<Empty> {
         SftpClient {
             config: Arc::new(config),
             path: None,
+            session: Arc::new(Mutex::new(None)),
             _state: PhantomData
         }
     }
@@ -31,6 +34,7 @@ impl SftpClient<Empty> {
         SftpClient {
             config: self.config.clone(),
             path: Some(path.into()),
+            session: self.session.clone(),
             _state: PhantomData
         }
     }
@@ -39,13 +43,17 @@ impl SftpClient<Empty> {
         SftpClient {
             config: self.config.clone(),
             path: Some(path.into()),
+            session: self.session.clone(),
             _state: PhantomData
         }
     }
 
-    pub async fn delete_file(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        let session = self.connect().await?;
-        session.remove_file(path.as_ref().to_string_lossy()).await?;
+    pub async fn delete_file(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let session = self.get_session().await?;
+        let path = path.as_ref().to_string_lossy();
+        
+        tracing::trace!("SFTP removing file {:?}", path);
+        session.remove_file(path).await?;
 
         Ok(())
     }
@@ -53,7 +61,7 @@ impl SftpClient<Empty> {
 
 impl SftpClient<GetFile> {
     pub async fn as_bytes(&mut self) -> anyhow::Result<Bytes> {
-        let session = self.connect().await?;
+        let session = self.get_session().await?;
         let path = self.path.as_ref().unwrap().to_string_lossy();
 
         let mut remote_file = session.open(path).await?;
@@ -65,7 +73,7 @@ impl SftpClient<GetFile> {
     }
 
     pub async fn as_stream(&mut self) -> anyhow::Result<ByteStream> {
-        let session = self.connect().await?;
+        let session = self.get_session().await?;
         let path = self.path.as_ref().unwrap().to_string_lossy();
 
         let remote_file = session.open(path).await?;
@@ -77,22 +85,22 @@ impl SftpClient<GetFile> {
 
 impl SftpClient<PutFile> {
     pub async fn from_bytes(&mut self, bytes: impl Into<Bytes>) -> anyhow::Result<()> {
-        let session = self.connect().await?;
+        let session = self.get_session().await?;
         let path = self.path.as_ref().unwrap().to_string_lossy();
-        tracing::trace!("uploading bytes to {:?}", path);
+        tracing::trace!("SFTP uploading bytes to {:?}", path);
 
         let mut remote_file = session.create(path).await?;
         remote_file.write_all(&bytes.into()).await?;
         remote_file.shutdown().await?;
 
-        tracing::trace!("upload complete");
+        tracing::trace!("SFTP upload complete");
         Ok(())
     }
 
     pub async fn from_stream(&mut self, mut stream: ByteStream) -> anyhow::Result<()> {
-        let session = self.connect().await?;
+        let session = self.get_session().await?;
         let path = self.path.as_ref().unwrap().to_string_lossy();
-        tracing::trace!("uploading bytes to {:?}", path);
+        tracing::trace!("SFTP uploading bytes to {:?}", path);
 
         let mut remote_file = session.create(path).await?;
         
@@ -102,20 +110,36 @@ impl SftpClient<PutFile> {
         }
         remote_file.shutdown().await?;
 
-        tracing::trace!("upload complete");
+        tracing::trace!("SFTP upload complete");
         Ok(())
     }
 }
 
 impl<State> SftpClient<State> {
-    async fn connect(&self) -> anyhow::Result<SftpSession> {
+    async fn get_session(&mut self) -> anyhow::Result<SftpSession> {
+        let mut guard = self.session.lock().await;
+
+        let session = match guard.take() {
+            Some(session) if !session.is_closed() => {
+                tracing::trace!("SSH session reused");
+                session
+            },
+            _ => self.connect_session().await?
+        };
+
+        let sftp = self.connect_sftp(&session).await?;
+        *guard = Some(session);
+        Ok(sftp)
+    }
+
+    async fn connect_session(&self) -> anyhow::Result<Handle<SshClient>> {
         let config = self.config.clone();
-        tracing::trace!("connecting to {}", config.endpoint);
+        tracing::trace!("SSH connecting to {}", config.endpoint);
         let mut session = russh::client::connect(Arc::new(russh::client::Config::default()), &config.endpoint, SshClient {}).await?;
         
         if let Some(auth) = &config.auth_basic {
             session.authenticate_password(&auth.user, &auth.password).await?;
-            tracing::trace!("authenticated using basic");
+            tracing::trace!("SSH authenticated using basic");
         }
 
         if let Some(auth) = &config.auth_private_key {
@@ -127,14 +151,17 @@ impl<State> SftpClient<State> {
 
             let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
             session.authenticate_publickey(&auth.user, key_with_alg).await?;
-            tracing::trace!("authenticated using key");
+            tracing::trace!("SSH authenticated using private key");
         }
 
+        Ok(session)
+    }
+
+    async fn connect_sftp(&self, session: &Handle<SshClient>) -> anyhow::Result<SftpSession> {
+        tracing::trace!("SSH requesting SFTP subsystem");
         let channel = session.channel_open_session().await?;
         channel.request_subsystem(true, "sftp").await?;
         let sftp = SftpSession::new(channel.into_stream()).await?;
-
-        tracing::trace!("connected to {}", config.endpoint);
         Ok(sftp)
     }
 }
