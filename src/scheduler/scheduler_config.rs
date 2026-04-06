@@ -1,4 +1,6 @@
-use time::{Date, Duration, OffsetDateTime, Time};
+use std::time::Duration;
+
+use time::{Date, OffsetDateTime, Time};
 
 pub struct SchedulerConfig {
     pub interval: Option<Duration>,

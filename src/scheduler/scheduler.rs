@@ -1,7 +1,7 @@
-use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc};
+use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc, time::Duration};
 
 use futures::FutureExt;
-use time::{OffsetDateTime, Duration};
+use time::{OffsetDateTime};
 use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
 
 use crate::scheduler::scheduler_config::SchedulerConfig;
@@ -48,9 +48,9 @@ impl Scheduler {
             loop {
                 let now = OffsetDateTime::now_utc();
                 if self.next_run > now {
-                    let duration = self.next_run - now;
-                    tracing::trace!("sleep: {:?}", duration);
-                    sleep(Self::to_std_duration(duration)).await;
+                    let duration = Self::to_std_duration(self.next_run - now);
+                    tracing::trace!("Sleep: {:?}", duration);
+                    sleep(duration).await;
                 }
                 
                 if self.config.interval != None {
@@ -88,8 +88,6 @@ impl Scheduler {
                 }
             }
         }
-
-        tracing::trace!("shut down complete");
     }
 
     async fn calculate_next_run(next_run: OffsetDateTime, interval: Option<Duration>) -> OffsetDateTime {
@@ -106,12 +104,8 @@ impl Scheduler {
         next_run
     }
 
-    fn to_std_duration(duration: Duration) -> std::time::Duration {
-        if duration.is_negative() {
-            std::time::Duration::from_millis(0)
-        } else {
-            std::time::Duration::new(duration.whole_seconds() as u64, duration.subsec_nanoseconds().try_into().unwrap())
-        }
+    fn to_std_duration(time_duration: time::Duration) -> Duration {
+        time_duration.try_into().unwrap_or(Duration::ZERO)
     }
 }
 
