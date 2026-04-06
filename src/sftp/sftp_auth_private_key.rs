@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-pub struct SftpAuthKey {
+pub struct SftpAuthPrivateKey {
     pub user: String,
-    pub key_path: PathBuf,
+    pub path: PathBuf,
     pub passphrase: Option<String>,
 }

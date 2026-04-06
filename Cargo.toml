@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.5.16"
+version = "0.5.17"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -33,7 +33,7 @@ webpki-roots = { version = "1.0.6", optional = true }
 rustls-pki-types = { version = "1.14.0", optional = true }
 regex = { version = "1.12.3", optional = true }
 time = { version = "0.3.47", optional = true }
-russh = { version = "0.57.0", optional = true }
+russh = { version = "0.60.0", optional = true, default-features = false, features = [ "ring", "rsa" ] }
 russh-sftp =  { version = "2.1.1", optional = true }
 lettre = { version = "0.11.19", optional = true, default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 aws-sdk-s3 = { version = "1.128.0", optional = true, default-features = false, features = ["rustls", "rt-tokio"] }
@@ -44,11 +44,11 @@ tokio-test = "0.4.5"
 tracing-subscriber = "0.3.23"
 
 [features]
-default = []
+default = ["sftp"]
 full = ["file", "scheduler", "sftp", "http", "smtp", "s3"]
 http = ["tokio", "hyper", "hyper-util", "hyper-rustls", "http-body-util", "tokio-rustls", "webpki-roots", "rustls", "rustls-pki-types", "rustls-native-certs", "matchit"]
 file = ["tokio", "tokio-util"]
 scheduler = ["tokio", "time"]
-sftp = ["tokio", "russh", "russh-sftp", "regex"]
+sftp = ["tokio", "tokio-util", "russh", "russh-sftp", "regex"]
 smtp = ["tokio", "lettre"]
 s3 = ["tokio", "tokio-util", "aws-sdk-s3", "aws-config", "regex", "http-body", "http-body-util"]
