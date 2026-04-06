@@ -3,9 +3,7 @@ use crate::{common::stream::ByteStream, s3::{s3_client::S3Client, s3_client_conf
 #[tokio::test]
 async fn client_test() {
     tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
-    let config = S3ClientConfig::new("http://127.0.0.1:9000")
-    .access_key("minioadmin")
-    .secret_key("minioadmin");
+    let config = S3ClientConfig::builder().endpoint("http://127.0.0.1:9000").access_key("minioadmin").secret_key("minioadmin").build().unwrap();
     let client = S3Client::new(config);
 
     let result = client.bucket("test").put_object("test.txt").from_bytes("bytes").await;

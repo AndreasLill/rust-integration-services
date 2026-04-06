@@ -31,9 +31,9 @@ impl S3Client<NoBucket> {
     }
 
     fn build_client(config: S3ClientConfig) -> Client {
-        let creds = Credentials::new(config.access_key, config.secret_key, None, None, "static");
+        let creds = Credentials::new(config.access_key.unwrap_or(String::new()), config.secret_key.unwrap_or(String::new()), None, None, "static");
         let provider = SharedCredentialsProvider::new(creds);
-        let region = Region::new(config.region);
+        let region = Region::new(config.region.unwrap_or(String::from("auto")));
         
         let sdk_config = SdkConfig::builder()
         .region(region)
