@@ -51,7 +51,7 @@ impl SftpClient<Empty> {
     pub async fn delete_file(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let session = self.get_session().await?;
         let path = path.as_ref().to_string_lossy();
-        
+
         tracing::trace!("SFTP removing file {:?}", path);
         session.remove_file(path).await?;
 
@@ -137,11 +137,9 @@ impl<State> SftpClient<State> {
         tracing::trace!("SSH connecting to {}", config.endpoint);
         let mut session = russh::client::connect(Arc::new(russh::client::Config::default()), &config.endpoint, SshClient {}).await?;
         
-        if let Some(auth) = &config.auth_basic {
-            session.authenticate_password(&auth.user, &auth.password).await?;
-            tracing::trace!("SSH authenticated using basic");
-        }
+        let mut authenticated = false;
 
+        // Try public key authentication first.
         if let Some(auth) = &config.auth_private_key {
             let key = russh::keys::load_secret_key(&auth.path, auth.passphrase.as_deref())?;
             let hash_alg = match &key.algorithm() {
@@ -150,8 +148,29 @@ impl<State> SftpClient<State> {
             };
 
             let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-            session.authenticate_publickey(&auth.user, key_with_alg).await?;
-            tracing::trace!("SSH authenticated using private key");
+            authenticated = session.authenticate_publickey(&auth.user, key_with_alg).await?.success();
+            if authenticated {
+                tracing::trace!("SSH authenticated using public key authentication");
+            } else {
+                tracing::trace!("SSH public key authentication failed");
+            }
+        }
+
+        // Try basic authentication if public key authentication failed or was not used.
+        if !authenticated {
+            if let Some(auth) = &config.auth_basic {
+                authenticated = session.authenticate_password(&auth.user, &auth.password).await?.success();
+                if authenticated {
+                    tracing::trace!("SSH authenticated using basic authentication");
+                } else {
+                    tracing::trace!("SSH basic authentication failed");
+                }
+                
+            }
+        }
+
+        if !authenticated {
+            return Err(anyhow::anyhow!("All authentication methods failed"))
         }
 
         Ok(session)

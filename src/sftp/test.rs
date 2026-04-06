@@ -11,7 +11,7 @@ async fn client_test() {
 
     let result = client.get_file("upload/file_bytes.txt").as_bytes().await;
     assert!(result.is_ok());
-    tracing::info!(?result);
+    tracing::info!("{:?}", result.unwrap());
 
     let result = client.delete_file("upload/file_bytes.txt").await;
     assert!(result.is_ok());
