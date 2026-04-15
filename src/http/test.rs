@@ -69,7 +69,7 @@ async fn http_client() {
 #[tokio::test]
 async fn http_client_tls() {
     tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().get("https://httpbin.org/get").body_empty().unwrap();
+    let request = HttpRequest::builder().get("https://api.open-meteo.com/v1/forecast?latitude=59.33&longitude=18.07&current_weather=true").body_empty().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
