@@ -14,22 +14,22 @@ Add rust-integration-services to your project Cargo.toml with all or select feat
 **All features**
 ``` toml
 [dependencies]
-tokio = { version = "1.51.0", features = ["full"] }
-rust-integration-services = { version = "0.5.20", features = ["full"] }
+tokio = { version = "1.52.0", features = ["full"] }
+rust-integration-services = { version = "0.5.21", features = ["full"] }
 ```
 
 **With select features**
 ``` toml
 [dependencies]
-tokio = { version = "1.51.0", features = ["full"] }
-rust-integration-services = { version = "0.5.20", features = ["file", "scheduler", "sftp", "http", "smtp", "s3"] }
+tokio = { version = "1.52.0", features = ["full"] }
+rust-integration-services = { version = "0.5.21", features = ["file", "scheduler", "sftp", "http", "smtp", "s3"] }
 ```
 
 ## Features
 
 ### File
 
-The file module focus on the local file system and is useful for polling files in a directory, copying, moving or writing to a file.
+The file module focus on the local file system and is useful for reading or writing to a file.
 
 
 ### Http

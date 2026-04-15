@@ -1,11 +1,10 @@
-use std::{collections::HashMap, convert::Infallible, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, pin::Pin, sync::Arc};
 
-use futures::FutureExt;
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{Request, Response, body::{Bytes, Incoming}, service::service_fn};
 use hyper_util::rt::TokioIo;
 use matchit::Router;
-use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}, task::JoinSet};
+use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}};
 use tokio_rustls::TlsAcceptor;
 
 use crate::http::{executor::Executor, http_request::HttpRequest, http_response::HttpResponse, server::http_server_config::HttpServerConfig};
@@ -48,7 +47,6 @@ impl HttpServer {
         let listener = TcpListener::bind(&host).await.expect("Failed to start TCP Listener");
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
-        let mut receiver_join_set = JoinSet::new();
         let router = Arc::new(self.router);
         
         tracing::trace!("Started on {}", &host);
@@ -65,7 +63,7 @@ impl HttpServer {
                 result = listener.accept() => {
                     let tls_acceptor = tls_acceptor.clone();
                     let router = router.clone();
-                    let (tcp_stream, client_addr) = match result {
+                    let (tcp_stream, _client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
                             tracing::error!("{:?}", err);
@@ -73,21 +71,18 @@ impl HttpServer {
                         },
                     };
 
-                    tracing::trace!("Connection {:?}", client_addr);
                     match tls_acceptor {
                         Some(acceptor) => {
-                            receiver_join_set.spawn(Self::tls_connection(acceptor, tcp_stream, router));
+                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router));
                         },
                         None => {
-                            receiver_join_set.spawn(Self::tcp_connection(tcp_stream, router));
+                            tokio::spawn(Self::tcp_connection(tcp_stream, router));
                         },
                     }
                 }
             }
         }
 
-        tracing::trace!("Shut down pending...");
-        while let Some(_) = receiver_join_set.join_next().await {}
         tracing::trace!("Shut down complete");
     }
 
@@ -130,7 +125,7 @@ impl HttpServer {
                 }
             }
             _ => {
-                if let Err(err) = hyper::server::conn::http1::Builder::new().keep_alive(false).serve_connection(io, service).await {
+                if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
                     tracing::error!("{:?}", err);
                 }
             }
@@ -140,21 +135,15 @@ impl HttpServer {
     async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
         match router.at(&request.uri().path()) {
             Ok(matched) => {
-                let params: HashMap<String, String> = matched.params.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+                let mut params: HashMap<String, String> = HashMap::with_capacity(matched.params.len());
+                for (k, v) in matched.params.iter() {
+                    params.insert(k.to_owned(), v.to_owned());
+                }
                 let callback = matched.value;
                 let (parts, body) = request.into_parts();
                 let body = body.map_err(|e| anyhow::Error::from(e));
                 let req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
-                let callback_fut = callback(req);
-                let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
-                let response = match result {
-                    Ok(res) => res,
-                    Err(err) => {
-                        tracing::error!("{:?}", err);
-                        HttpResponse::builder().status(500).body_empty().unwrap()
-                    }
-                };
-
+                let response = callback(req).await;
                 Ok(Response::from(response))
             },
             Err(_) => {
