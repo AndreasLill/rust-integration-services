@@ -1,5 +1,6 @@
 use std::{collections::HashMap, convert::Infallible, pin::Pin, sync::Arc};
 
+use futures::FutureExt;
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{Request, Response, body::{Bytes, Incoming}, service::service_fn};
 use hyper_util::rt::TokioIo;
@@ -12,12 +13,14 @@ use crate::http::{executor::Executor, http_request::HttpRequest, http_response::
 type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 type BeforeCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = BeforeResult> + Send>> + Send + Sync>;
 type AfterCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type ErrorCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 pub struct HttpServer {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
     before: Vec<BeforeCallback>,
     after: Vec<AfterCallback>,
+    on_error: Option<ErrorCallback>,
 }
 
 impl HttpServer {
@@ -27,6 +30,7 @@ impl HttpServer {
             router: Router::new(),
             before: Vec::new(),
             after: Vec::new(),
+            on_error: None,
         }
     }
 
@@ -46,6 +50,7 @@ impl HttpServer {
         let router = Arc::new(self.router);
         let before: Arc<[BeforeCallback]> = self.before.into();
         let after: Arc<[AfterCallback]> = self.after.into();
+        let on_error = self.on_error;
         
         tracing::trace!("Started on {}", &host);
         loop {
@@ -63,6 +68,7 @@ impl HttpServer {
                     let router = router.clone();
                     let before = before.clone();
                     let after = after.clone();
+                    let on_error = on_error.clone();
                     let (tcp_stream, _client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
@@ -73,10 +79,10 @@ impl HttpServer {
 
                     match tls_acceptor {
                         Some(acceptor) => {
-                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router, before, after));
+                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router, before, after, on_error));
                         },
                         None => {
-                            tokio::spawn(Self::tcp_connection(tcp_stream, router, before, after));
+                            tokio::spawn(Self::tcp_connection(tcp_stream, router, before, after, on_error));
                         },
                     }
                 }
@@ -86,11 +92,11 @@ impl HttpServer {
         tracing::trace!("Shut down complete");
     }
 
-    async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) {
+    async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>, on_error: Option<ErrorCallback>) {
         let service = {
             let router = router.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, router.clone(), before.clone(), after.clone())
+                Self::incoming_request(req, router.clone(), before.clone(), after.clone(), on_error.clone())
             })
         };
         
@@ -100,7 +106,7 @@ impl HttpServer {
         }
     }
 
-    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) {
+    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>, on_error: Option<ErrorCallback>) {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
@@ -112,7 +118,7 @@ impl HttpServer {
         let service = {
             let router = router.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, router.clone(), before.clone(), after.clone())
+                Self::incoming_request(req, router.clone(), before.clone(), after.clone(), on_error.clone())
             })
         };
         
@@ -132,7 +138,35 @@ impl HttpServer {
         }
     }
 
-    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
+    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>, on_error: Option<ErrorCallback>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
+        let result = std::panic::AssertUnwindSafe(Self::inner_request(request, router, before, after)).catch_unwind().await;
+        match result {
+            Ok(response) => response,
+            Err(err) => {
+                let error = if let Some(s) = err.downcast_ref::<String>() {
+                    s.as_str()
+                } else if let Some(s) = err.downcast_ref::<&str>() {
+                    s
+                } else {
+                    "Unknown panic!"
+                };
+
+                let response = match on_error {
+                    Some(handler) => {
+                        handler(error.to_string()).await
+                    },
+                    None => {
+                        tracing::error!("{:?}", error);
+                        HttpResponse::builder().status(500).body_empty().unwrap()
+                    },
+                };
+
+                Ok(Response::from(response))
+            }
+        }
+    }
+
+    async fn inner_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
         let path = request.uri().path().to_owned();
         match router.at(&path) {
             Ok(matched) => {
@@ -209,6 +243,7 @@ pub struct HttpServerBuilder {
     router: Router<RouteCallback>,
     before: Vec<BeforeCallback>,
     after: Vec<AfterCallback>,
+    on_error: Option<ErrorCallback>,
 }
 
 impl HttpServerBuilder {
@@ -258,11 +293,26 @@ impl HttpServerBuilder {
         self
     }
 
+    /// Registers a global error handler for the HTTP server.
+    /// 
+    /// The handler receives an error string and return `HttpResponse` to allow full control over how errors are translated into a response.
+    /// 
+    /// Only one error handler is supported, and registering multiple will overwrite the previous one.
+    pub fn on_error<T, Fut>(mut self, callback: T) -> Self
+    where 
+        T: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HttpResponse> + Send + 'static,
+    {
+        self.on_error = Some(Arc::new(move |err| Box::pin(callback(err))));
+        self
+    }
+
     pub fn build(self) -> HttpServer {
         HttpServer {
             config: self.config,
             router: self.router,
             before: self.before,
+            on_error: self.on_error,
             after: self.after
         }
     }
