@@ -13,13 +13,6 @@ type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Http
 type BeforeCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = BeforeResult> + Send>> + Send + Sync>;
 type AfterCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
-pub enum BeforeResult {
-    /// Continue to next request middleware in the pipeline.
-    Next(HttpRequest),
-    /// Short-circuit the request pipeline and produce a response.
-    Response(HttpResponse),
-}
-
 pub struct HttpServer {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
@@ -185,6 +178,32 @@ impl HttpServer {
     }
 }
 
+/// Result type used internally by the request middleware pipeline.
+///
+/// This type is typically not used directly by end users.
+///
+/// Instead, middleware can simply return either:
+/// - `HttpRequest` to continue processing
+/// - `HttpResponse` to short-circuit the pipeline
+///
+/// The conversion is handled automatically via `Into<BeforeResult>`.
+pub enum BeforeResult {
+    Next(HttpRequest),
+    Response(HttpResponse),
+}
+
+impl From<HttpRequest> for BeforeResult {
+    fn from(req: HttpRequest) -> Self {
+        BeforeResult::Next(req)
+    }
+}
+
+impl From<HttpResponse> for BeforeResult {
+    fn from(res: HttpResponse) -> Self {
+        BeforeResult::Response(res)
+    }
+}
+
 pub struct HttpServerBuilder {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
@@ -194,16 +213,24 @@ pub struct HttpServerBuilder {
 
 impl HttpServerBuilder {
     /// Add a middleware to the request pipeline.
-    /// This middleware runs before route handlers and may:
-    /// - modify the request
-    /// - stop execution early by returning a response
-    /// - pass the request to the next middleware
-    pub fn before<T, Fut>(mut self, callback: T) -> Self
+    ///
+    /// - Return `HttpRequest` to continue to the next middleware or route handler
+    /// - Return `HttpResponse` to short-circuit the pipeline and respond immediately
+    ///
+    /// Response will still be processed by the response `after` pipeline, if any.
+    pub fn before<T, Fut, R>(mut self, callback: T) -> Self
     where 
         T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = BeforeResult> + Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: Into<BeforeResult> + 'static,
     {
-        self.before.push(Arc::new(move |request| Box::pin(callback(request))));
+        let callback = Arc::new(callback);
+        self.before.push(Arc::new(move |request| {
+            let callback = Arc::clone(&callback);
+            Box::pin(async move {
+                callback(request).await.into()
+            })
+        }));
         self
     }
 

@@ -1,6 +1,6 @@
 use std::{env::home_dir, time::Duration};
 
-use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::{BeforeResult, HttpServer}, http_server_config::HttpServerConfig}};
+use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::{HttpServer}, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
 async fn http_server_client() {
@@ -69,12 +69,12 @@ async fn http_server_middleware() {
         })
         .before(async move |_| {
             tracing::info!("before");
-            BeforeResult::Response(HttpResponse::builder().status(400).body_empty().unwrap())
+            HttpResponse::builder().status(400).body_empty().unwrap()
         })
         .before(async move |request| {
             tracing::info!("before 2");
             assert!(false);
-            BeforeResult::Next(request)
+            request
         })
         .after(async move |response| {
             tracing::info!("after");
