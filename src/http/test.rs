@@ -1,16 +1,17 @@
 use std::{env::home_dir, time::Duration};
 
-use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::HttpServer, http_server_config::HttpServerConfig}};
+use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::{BeforeResult, HttpServer}, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
 async fn http_server_client() {
     tracing_subscriber::fmt().init();
     tokio::spawn(async move {
         let config = HttpServerConfig::new("127.0.0.1", 8080);
-        HttpServer::new(config)
-        .route("/", async move |_req| {
+        HttpServer::builder(config)
+        .route("/", async move |_| {
             HttpResponse::builder().status(200).body_empty().unwrap()
         })
+        .build()
         .run()
         .await;
     });
@@ -37,10 +38,11 @@ async fn http_server_client_tls() {
         let server_key_path = home_dir().unwrap().join("server-key.pem");
 
         let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
-        HttpServer::new(config)
+        HttpServer::builder(config)
         .route("/", async move |_req| {
             HttpResponse::builder().status(200).body_empty().unwrap()
         })
+        .build()
         .run()
         .await;
     });
@@ -53,6 +55,44 @@ async fn http_server_client_tls() {
     let response = result.unwrap();
     tracing::info!(?response);
     assert_eq!(response.status(), 200);
+}
+
+#[tokio::test(start_paused = true)]
+async fn http_server_middleware() {
+    tracing_subscriber::fmt().init();
+    tokio::spawn(async move {
+        let config = HttpServerConfig::new("127.0.0.1", 8080);
+        HttpServer::builder(config)
+        .route("/", async move |_req| {
+            tracing::info!("route");
+            HttpResponse::builder().status(200).body_empty().unwrap()
+        })
+        .before(async move |_| {
+            tracing::info!("before");
+            BeforeResult::Response(HttpResponse::builder().status(400).body_empty().unwrap())
+        })
+        .before(async move |request| {
+            tracing::info!("before 2");
+            assert!(false);
+            BeforeResult::Next(request)
+        })
+        .after(async move |response| {
+            tracing::info!("after");
+            response
+        })
+        .build()
+        .run()
+        .await;
+    });
+
+    tokio::time::advance(Duration::from_millis(1000)).await;
+    let request = HttpRequest::builder().get("http://127.0.0.1:8080").body_empty().unwrap();
+    let result = HttpClient::new().send(request).await;
+    assert!(result.is_ok());
+
+    let response = result.unwrap();
+    tracing::info!(?response);
+    assert_eq!(response.status(), 400);
 }
 
 #[tokio::test]

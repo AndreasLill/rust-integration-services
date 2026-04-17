@@ -10,28 +10,31 @@ use tokio_rustls::TlsAcceptor;
 use crate::http::{executor::Executor, http_request::HttpRequest, http_response::HttpResponse, server::http_server_config::HttpServerConfig};
 
 type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type BeforeCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = BeforeResult> + Send>> + Send + Sync>;
+type AfterCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+
+pub enum BeforeResult {
+    /// Continue to next request middleware in the pipeline.
+    Next(HttpRequest),
+    /// Short-circuit the request pipeline and produce a response.
+    Response(HttpResponse),
+}
 
 pub struct HttpServer {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
+    before: Vec<BeforeCallback>,
+    after: Vec<AfterCallback>,
 }
 
 impl HttpServer {
-    pub fn new(config: HttpServerConfig) -> Self {
-        HttpServer {
+    pub fn builder(config: HttpServerConfig) -> HttpServerBuilder {
+        HttpServerBuilder {
             config,
             router: Router::new(),
+            before: Vec::new(),
+            after: Vec::new(),
         }
-    }
-
-    /// Registers a route with a path, associating it with a handler callback.
-    pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> Self
-    where
-        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse> + Send + 'static,
-    {
-        self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
-        self
     }
 
     /// Run the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
@@ -48,6 +51,8 @@ impl HttpServer {
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
         let router = Arc::new(self.router);
+        let before: Arc<[BeforeCallback]> = self.before.into();
+        let after: Arc<[AfterCallback]> = self.after.into();
         
         tracing::trace!("Started on {}", &host);
         loop {
@@ -63,6 +68,8 @@ impl HttpServer {
                 result = listener.accept() => {
                     let tls_acceptor = tls_acceptor.clone();
                     let router = router.clone();
+                    let before = before.clone();
+                    let after = after.clone();
                     let (tcp_stream, _client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
@@ -73,10 +80,10 @@ impl HttpServer {
 
                     match tls_acceptor {
                         Some(acceptor) => {
-                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router));
+                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router, before, after));
                         },
                         None => {
-                            tokio::spawn(Self::tcp_connection(tcp_stream, router));
+                            tokio::spawn(Self::tcp_connection(tcp_stream, router, before, after));
                         },
                     }
                 }
@@ -86,11 +93,11 @@ impl HttpServer {
         tracing::trace!("Shut down complete");
     }
 
-    async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>) {
+    async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) {
         let service = {
             let router = router.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, router.clone())
+                Self::incoming_request(req, router.clone(), before.clone(), after.clone())
             })
         };
         
@@ -100,7 +107,7 @@ impl HttpServer {
         }
     }
 
-    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>) {
+    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
@@ -112,7 +119,7 @@ impl HttpServer {
         let service = {
             let router = router.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, router.clone())
+                Self::incoming_request(req, router.clone(), before.clone(), after.clone())
             })
         };
         
@@ -132,24 +139,104 @@ impl HttpServer {
         }
     }
 
-    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
-        match router.at(&request.uri().path()) {
+    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
+        let path = request.uri().path().to_owned();
+        match router.at(&path) {
             Ok(matched) => {
                 let mut params: HashMap<String, String> = HashMap::with_capacity(matched.params.len());
                 for (k, v) in matched.params.iter() {
                     params.insert(k.to_owned(), v.to_owned());
                 }
-                let callback = matched.value;
                 let (parts, body) = request.into_parts();
                 let body = body.map_err(|e| anyhow::Error::from(e));
-                let req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
-                let response = callback(req).await;
+                let mut req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
+
+                for handler in before.iter() {
+                    match handler(req).await {
+                        BeforeResult::Next(request) => {
+                            req = request;
+                        },
+                        BeforeResult::Response(response) => {
+                            let mut response = response;
+
+                            for handler in after.iter() {
+                                response = handler(response).await;
+                            }
+
+                            return Ok(Response::from(response))
+                        },
+                    }
+                }
+
+                let callback = matched.value;
+                let mut response = callback(req).await;
+
+                for handler in after.iter() {
+                    response = handler(response).await;
+                }
+
                 Ok(Response::from(response))
             },
             Err(_) => {
                 let response = HttpResponse::builder().status(404).body_empty().unwrap();
                 Ok(Response::from(response))
             },
+        }
+    }
+}
+
+pub struct HttpServerBuilder {
+    config: HttpServerConfig,
+    router: Router<RouteCallback>,
+    before: Vec<BeforeCallback>,
+    after: Vec<AfterCallback>,
+}
+
+impl HttpServerBuilder {
+    /// Add a middleware to the request pipeline.
+    /// This middleware runs before route handlers and may:
+    /// - modify the request
+    /// - stop execution early by returning a response
+    /// - pass the request to the next middleware
+    pub fn before<T, Fut>(mut self, callback: T) -> Self
+    where 
+        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = BeforeResult> + Send + 'static,
+    {
+        self.before.push(Arc::new(move |request| Box::pin(callback(request))));
+        self
+    }
+
+    /// Registers a route with a path, associating it with a handler callback.
+    pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> Self
+    where
+        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HttpResponse> + Send + 'static,
+    {
+        self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
+        self
+    }
+
+    /// Add a middleware to the response pipeline.
+    ///
+    /// This middleware runs after a response is produced and can modify the response before it is sent to the client.
+    /// 
+    /// It does not affect request execution flow.
+    pub fn after<T, Fut>(mut self, callback: T) -> Self
+    where 
+        T: Fn(HttpResponse) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HttpResponse> + Send + 'static,
+    {
+        self.after.push(Arc::new(move |response| Box::pin(callback(response))));
+        self
+    }
+
+    pub fn build(self) -> HttpServer {
+        HttpServer {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            after: self.after
         }
     }
 }
