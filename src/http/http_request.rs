@@ -255,7 +255,7 @@ impl From<Request<BoxBody<Bytes, Error>>> for HttpRequest {
 impl From<Request<Incoming>> for HttpRequest {
     fn from(req: Request<Incoming>) -> Self {
         let (parts, body) = req.into_parts();
-        let body = body.map_err(|e| anyhow::Error::from(e));
+        let body = body.map_err(anyhow::Error::from);
         HttpRequest::from_parts(body.boxed(), parts)
     }
 }

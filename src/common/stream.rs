@@ -22,7 +22,7 @@ impl ByteStream {
         self.0
     }
 
-    pub async fn as_bytes(self) -> anyhow::Result<Bytes> {
+    pub async fn to_bytes(self) -> anyhow::Result<Bytes> {
         let mut stream = self.0;
         let mut buffer = BytesMut::new();
 

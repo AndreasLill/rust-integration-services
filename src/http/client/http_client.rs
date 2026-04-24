@@ -49,9 +49,7 @@ impl HttpClient {
         
         let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await?;
         
-        tokio::spawn(async move {
-            connection.await
-        });
+        tokio::spawn(connection);
         
         let res = sender.send_request(Request::from(request)).await?;
         Ok(HttpResponse::from(res))
@@ -72,7 +70,7 @@ impl HttpClient {
         let tls_stream = tls_connector.connect(domain, tcp_stream).await?;
 
         let protocol = tls_stream.get_ref().1.alpn_protocol();
-        let version = match protocol.as_deref() {
+        let version = match protocol {
             Some(b"h2") => Version::HTTP_2,
             _ => Version::HTTP_11,
         };
@@ -82,9 +80,7 @@ impl HttpClient {
                 let io = TokioIo::new(tls_stream);
                 let (mut sender, connection) = hyper::client::conn::http2::Builder::new(Executor).handshake(io).await?;
                 
-                tokio::spawn(async move {
-                    connection.await
-                });
+                tokio::spawn(connection);
                 
                 let mut hyper_request = Request::from(request);
                 *hyper_request.version_mut() = version;
@@ -95,9 +91,7 @@ impl HttpClient {
                 let io = TokioIo::new(tls_stream);
                 let (mut sender, connection) = hyper::client::conn::http1::handshake(io).await?;
         
-                tokio::spawn(async move {
-                    connection.await
-                });
+                tokio::spawn(connection);
                 
                 let mut hyper_request = Request::from(request);
                 *hyper_request.version_mut() = version;
