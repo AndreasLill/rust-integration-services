@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, pin::Pin, sync::Arc};
+use std::{convert::Infallible, pin::Pin, sync::Arc};
 
 use futures::FutureExt;
 use http_body_util::{BodyExt, combinators::BoxBody};
@@ -167,14 +167,12 @@ impl HttpServer {
     }
 
     async fn inner_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, before: Arc<[BeforeCallback]>, after: Arc<[AfterCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
-        let path = request.uri().path().to_owned();
+        let (parts, body) = request.into_parts();
+        let path = parts.uri.path().to_owned();
         match router.at(&path) {
             Ok(matched) => {
-                let mut params: HashMap<String, String> = HashMap::with_capacity(matched.params.len());
-                for (k, v) in matched.params.iter() {
-                    params.insert(k.to_owned(), v.to_owned());
-                }
-                let (parts, body) = request.into_parts();
+                let params: Vec<(String, String)> = matched.params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+
                 let body = body.map_err(anyhow::Error::from);
                 let mut req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
 

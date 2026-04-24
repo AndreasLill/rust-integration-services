@@ -50,9 +50,16 @@ impl HttpResponse {
         self.parts.status.as_u16()
     }
 
+    /// Returns a header by key.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&str> {
+        self.parts.headers.get(key.as_ref()).and_then(|v| v.to_str().ok())
+    }
+
     /// Returns all headers.
-    pub fn headers(&self) -> &HeaderMap<HeaderValue> {
-        &self.parts.headers
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.parts.headers.iter().filter_map(|(k, v)| {
+            v.to_str().ok().map(|val| (k.as_str(), val))
+        })
     }
 }
 
