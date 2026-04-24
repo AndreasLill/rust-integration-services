@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::str::FromStr;
 
 use anyhow::Error;
 use bytes::Bytes;
@@ -7,7 +8,7 @@ use http_body_util::{Empty, Full, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{HeaderMap, Uri};
 use hyper::body::Frame;
-use hyper::header::HeaderValue;
+use hyper::header::{HeaderName, HeaderValue};
 use hyper::{Request, body::Incoming};
 
 use crate::common::stream::ByteStream;
@@ -86,16 +87,27 @@ impl HttpRequest {
         self.parts.uri.scheme_str()
     }
 
-    /// Returns a header by key.
-    pub fn header(&self, key: impl AsRef<str>) -> Option<&str> {
-        self.parts.headers.get(key.as_ref()).and_then(|v| v.to_str().ok())
+    /// Add a header.
+    pub fn add_header(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> anyhow::Result<()> {
+        let key = HeaderName::from_str(key.as_ref())?;
+        let value = value.as_ref().parse()?;
+        self.parts.headers.insert(key, value);
+        Ok(())
+    }
+
+    /// Remove a header.
+    pub fn remove_header(&mut self, key: impl AsRef<str>) {
+        self.parts.headers.remove(key.as_ref());
+    }
+
+    /// Returns a single header by key.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&HeaderValue> {
+        self.parts.headers.get(key.as_ref())
     }
 
     /// Returns all headers.
-    pub fn headers(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.parts.headers.iter().filter_map(|(k, v)| {
-            v.to_str().ok().map(|val| (k.as_str(), val))
-        })
+    pub fn headers(&self) -> &HeaderMap {
+        &self.parts.headers
     }
 
     // Returns a param by key.
@@ -242,8 +254,8 @@ impl HttpRequestBuilder<Final> {
     }
 
     /// Copy headers from another request or response.
-    pub fn headers(mut self, headers: &HeaderMap<HeaderValue>) -> Self {
-        for (key, value) in headers.iter() {
+    pub fn headers(mut self, headers: &HeaderMap) -> Self {
+        for (key, value) in headers {
             self.builder = self.builder.header(key, value);
         }
         self

@@ -1,10 +1,10 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, str::FromStr};
 
 use anyhow::Error;
 use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
-use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
+use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::{HeaderName, HeaderValue}};
 
 use crate::common::stream::ByteStream;
 
@@ -50,16 +50,27 @@ impl HttpResponse {
         self.parts.status.as_u16()
     }
 
-    /// Returns a header by key.
-    pub fn header(&self, key: impl AsRef<str>) -> Option<&str> {
-        self.parts.headers.get(key.as_ref()).and_then(|v| v.to_str().ok())
+    /// Add a header.
+    pub fn add_header(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> anyhow::Result<()> {
+        let key = HeaderName::from_str(key.as_ref())?;
+        let value = value.as_ref().parse()?;
+        self.parts.headers.insert(key, value);
+        Ok(())
+    }
+
+    /// Remove a header.
+    pub fn remove_header(&mut self, key: impl AsRef<str>) {
+        self.parts.headers.remove(key.as_ref());
+    }
+
+    /// Returns a single header by key.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&HeaderValue> {
+        self.parts.headers.get(key.as_ref())
     }
 
     /// Returns all headers.
-    pub fn headers(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.parts.headers.iter().filter_map(|(k, v)| {
-            v.to_str().ok().map(|val| (k.as_str(), val))
-        })
+    pub fn headers(&self) -> &HeaderMap {
+        &self.parts.headers
     }
 }
 
@@ -118,7 +129,7 @@ impl HttpResponseBuilder<Final> {
     }
 
     /// Copy headers from another request or response.
-    pub fn headers(mut self, headers: &HeaderMap<HeaderValue>) -> Self {
+    pub fn headers(mut self, headers: &HeaderMap) -> Self {
         for (key, value) in headers.iter() {
             self.builder = self.builder.header(key, value);
         }
