@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use anyhow::Error;
@@ -20,7 +19,7 @@ pub struct SetMethod;
 pub struct HttpRequest {
     body: BoxBody<Bytes, Error>,
     parts: hyper::http::request::Parts,
-    params: HashMap<String, String>,
+    params: Vec<(String, String)>,
 }
 
 impl HttpRequest {
@@ -39,12 +38,12 @@ impl HttpRequest {
         HttpRequest {
             body,
             parts,
-            params: HashMap::new()
+            params: Vec::new()
         }
     }
 
     /// Create a new request from hyper parts with params.
-    pub fn from_parts_with_params(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts, params: HashMap<String, String>) -> HttpRequest {
+    pub fn from_parts_with_params(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts, params: Vec<(String, String)>) -> HttpRequest {
         HttpRequest {
             body,
             parts,
@@ -87,14 +86,26 @@ impl HttpRequest {
         self.parts.uri.scheme_str()
     }
 
-    /// Returns all headers.
-    pub fn headers(&self) -> &HeaderMap<HeaderValue> {
-        &self.parts.headers
+    /// Returns a header by key.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&str> {
+        self.parts.headers.get(key.as_ref()).and_then(|v| v.to_str().ok())
     }
 
-    /// Returns a hashmap with request params.
-    pub fn params(&self) -> &HashMap<String, String> {
-        &self.params
+    /// Returns all headers.
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.parts.headers.iter().filter_map(|(k, v)| {
+            v.to_str().ok().map(|val| (k.as_str(), val))
+        })
+    }
+
+    // Returns a param by key.
+    pub fn param(&self, key: impl AsRef<str>) -> Option<&str> {
+        self.params.iter().find(|(k, _)| k == key.as_ref()).map(|(_, v)| v.as_str())
+    }
+
+    /// Returns an iterator with request params.
+    pub fn params(&self) -> impl Iterator<Item = (&str, &str)>  {
+        self.params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 }
 
@@ -255,7 +266,7 @@ impl From<Request<BoxBody<Bytes, Error>>> for HttpRequest {
 impl From<Request<Incoming>> for HttpRequest {
     fn from(req: Request<Incoming>) -> Self {
         let (parts, body) = req.into_parts();
-        let body = body.map_err(|e| anyhow::Error::from(e));
+        let body = body.map_err(anyhow::Error::from);
         HttpRequest::from_parts(body.boxed(), parts)
     }
 }
