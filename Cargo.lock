@@ -2770,7 +2770,7 @@ dependencies = [
 
 [[package]]
 name = "rust-integration-services"
-version = "0.5.29"
+version = "0.5.30"
 dependencies = [
  "anyhow",
  "aws-config",
