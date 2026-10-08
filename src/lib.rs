@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod common;
 
 #[cfg(feature = "http")]
