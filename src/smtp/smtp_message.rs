@@ -1,32 +1,45 @@
-use crate::smtp::smtp_content_type::SmtpContentType;
-
+#[derive(Clone)]
 pub struct SmtpMessage {
+    pub from: Vec<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
     pub subject: String,
     pub body: String,
-    pub content_type: SmtpContentType,
 }
 
 impl SmtpMessage {
     pub fn new() -> Self {
-        SmtpMessage {
+        Self {
+            from: Vec::new(),
+            to: Vec::new(),
+            cc: Vec::new(),
             subject: String::new(),
             body: String::new(),
-            content_type: SmtpContentType::TextPlain,
         }
     }
 
-    pub fn with_subject<T: AsRef<str>>(mut self, subject: T) -> Self {
-        self.subject = subject.as_ref().to_string();
+    pub fn from(mut self, from: impl Into<String>) -> Self {
+        self.from.push(from.into());
         self
     }
 
-    pub fn with_body<T: AsRef<str>>(mut self, body: T) -> Self {
-        self.body = body.as_ref().to_string();
+    pub fn to(mut self, to: impl Into<String>) -> Self {
+        self.to.push(to.into());
         self
     }
 
-    pub fn with_content_type(mut self, content_type: SmtpContentType) -> Self {
-        self.content_type = content_type;
+    pub fn cc(mut self, cc: impl Into<String>) -> Self {
+        self.cc.push(cc.into());
+        self
+    }
+
+    pub fn subject(mut self, subject: impl Into<String>) -> Self {
+        self.subject = subject.into();
+        self
+    }
+
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = body.into();
         self
     }
 }
