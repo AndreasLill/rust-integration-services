@@ -1,31 +1,47 @@
-use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc, time::Duration};
+use std::{panic::AssertUnwindSafe, pin::Pin, sync::Arc};
 
+use chrono::Utc;
+use croner::Cron;
 use futures::FutureExt;
-use time::{OffsetDateTime};
-use tokio::{signal::unix::{signal, SignalKind}, task::JoinSet, time::sleep};
-
-use crate::scheduler::scheduler_config::SchedulerConfig;
+use tokio::{signal::unix::{SignalKind, signal}, task::JoinSet, time::sleep};
 
 type TriggerCallback = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 pub struct Scheduler {
-    config: SchedulerConfig,
-    next_run: OffsetDateTime,
+    cron: String,
+    once: bool,
     callback: TriggerCallback,
 }
 
 impl Scheduler {
-    pub fn new(config: SchedulerConfig) -> Self {
-        let start_date = config.start_date;
-        let start_time = config.start_time;
-        Scheduler {
-            config,
-            next_run: start_date.with_time(start_time).assume_utc(),
+
+    /// Create a new scheduler with a cron expression.
+    /// 
+    /// Example - run every 10 seconds: `*/10 * * * * *`
+    /// 
+    /// 1 - (optional) second (0 - 59)
+    /// 
+    /// 2 - minute (0 - 59)
+    /// 
+    /// 3 - hour (0 - 23)
+    /// 
+    /// 4 - day of month (1 - 31)
+    /// 
+    /// 5 - month (1 - 12, JAN-DEC)
+    /// 
+    /// 6 - day of week (0 - 6, SUN-Mon)
+    /// 
+    /// For more information, refer to https://crates.io/crates/croner
+    pub fn new(cron: impl Into<String>) -> Self {
+        Self {
+            cron: cron.into(),
+            once: false,
             callback: Arc::new(|| Box::pin(async {})),
         }
     }
 
-    pub fn trigger<T, Fut>(mut self, callback: T) -> Self
+    /// Sets the asynchronous job to execute when the scheduler triggers.
+    pub fn job<T, Fut>(mut self, callback: T) -> Self
     where
         T: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
@@ -34,40 +50,38 @@ impl Scheduler {
         self
     }
 
-    pub async fn run(mut self) {
+    /// Set the scheduler to only run once.
+    pub fn once(mut self) -> Self {
+        self.once = true;
+        self
+    }
+
+    /// Run the scheduler.
+    pub async fn run(self) {
         let mut receiver_join_set = JoinSet::new();
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
+        let cron: Cron = self.cron.parse().expect("Could not parse cron expression");
 
-        if self.next_run < OffsetDateTime::now_utc() {
-            self.next_run = Self::calculate_next_run(self.next_run, self.config.interval).await;
-        }
-
-        tracing::trace!("Scheduler next run at {:?}", self.next_run);
         receiver_join_set.spawn(async move {
             loop {
-                let now = OffsetDateTime::now_utc();
-                if self.next_run > now {
-                    let duration = Self::to_std_duration(self.next_run - now);
-                    tracing::trace!("Sleep: {:?}", duration);
-                    sleep(duration).await;
-                }
-                
-                if self.config.interval != None {
-                    self.next_run = Self::calculate_next_run(self.next_run, self.config.interval).await;
-                }
+                let now = Utc::now();
+                let next = cron.find_next_occurrence(&now, false).expect("Could not find next cron occurrence");
+                tracing::trace!("Cron: {:?}", next);
+
+                let duration = (next - now).to_std().expect("Cron occurrence is before now");
+                sleep(duration).await;
 
                 let callback_fut = (self.callback)();
                 let result = AssertUnwindSafe(callback_fut).catch_unwind().await;
                 if let Err(err) = result {
                     tracing::trace!("{:?}", err);
                 }
-                
-                if self.config.interval == None {
+
+                if self.once {
+                    tracing::trace!("Once was configured, stopping...");
                     break;
                 }
-
-                tracing::trace!("Scheduler next run at {:?}", self.next_run);
             }
         });
 
@@ -88,29 +102,7 @@ impl Scheduler {
                 }
             }
         }
-    }
 
-    async fn calculate_next_run(next_run: OffsetDateTime, interval: Option<Duration>) -> OffsetDateTime {
-        
-        if let Some(duration) = interval {
-            let now = OffsetDateTime::now_utc();
-            let mut calculated_next_run = next_run;
-            while calculated_next_run < now {
-                calculated_next_run += duration;
-            }
-            return calculated_next_run;
-        }
-
-        next_run
-    }
-
-    fn to_std_duration(time_duration: time::Duration) -> Duration {
-        time_duration.try_into().unwrap_or(Duration::ZERO)
-    }
-}
-
-impl Default for Scheduler {
-    fn default() -> Self {
-        Scheduler::new(SchedulerConfig::new())
+        tracing::trace!("Scheduler stopped");
     }
 }
