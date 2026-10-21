@@ -14,13 +14,7 @@ pub struct SmtpClientConfig {
 
 impl SmtpClientConfig {
     pub fn builder() -> SmtpClientConfigBuilder {
-        SmtpClientConfigBuilder {
-            host: None,
-            port: None,
-            security: None,
-            username: None,
-            password: None,
-        }
+        SmtpClientConfigBuilder::new()
     }
 
     /// Returns the SMTP server host.
@@ -59,6 +53,17 @@ pub struct SmtpClientConfigBuilder {
 }
 
 impl SmtpClientConfigBuilder {
+
+    pub fn new() -> Self {
+        Self {
+            host: None,
+            port: None,
+            security: None,
+            username: None,
+            password: None,
+        }
+    }
+
     /// Sets the SMTP server host.
     ///
     /// # Examples
@@ -112,14 +117,20 @@ impl SmtpClientConfigBuilder {
     /// # Errors
     /// Returns an error if any required field (host, port, security) is missing.
     pub fn build(self) -> anyhow::Result<SmtpClientConfig> {
-        let host = self.host.ok_or_else(|| anyhow::anyhow!("host is required"))?;
-        let port = self.port.ok_or_else(|| anyhow::anyhow!("port is required"))?;
-        let security = self.security.ok_or_else(|| anyhow::anyhow!("security is required"))?;
+        if self.host.is_none() {
+            anyhow::bail!("host is required")
+        }
+        if self.port.is_none() {
+            anyhow::bail!("port is required")
+        }
+        if self.security.is_none() {
+            anyhow::bail!("security is required")
+        }
 
         Ok(SmtpClientConfig {
-            host,
-            port,
-            security,
+            host: self.host.unwrap(),
+            port: self.port.unwrap(),
+            security: self.security.unwrap(),
             username: self.username,
             password: self.password,
         })

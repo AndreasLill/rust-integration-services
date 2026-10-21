@@ -10,12 +10,14 @@ async fn test_smtp_client() {
     .unwrap();
     let client = SmtpClient::new(config);
 
-    let message = SmtpMessage::new()
+    let message = SmtpMessage::builder()
     .from("from@email.com")
     .to("to@email.com")
     .cc("cc@email.com")
     .subject("subject")
-    .body("body");
+    .body("body")
+    .build()
+    .unwrap();
 
     let res = client.send(message).await;
 
@@ -89,4 +91,60 @@ fn test_smtp_config_getters() {
     assert_eq!(config.security(), &SmtpSecurity::None);
     assert_eq!(config.username(), Some("user@example.com"));
     assert_eq!(config.password(), Some("password123"));
+}
+
+#[test]
+fn test_smtp_message() {
+    let message = SmtpMessage::builder()
+    .from("from@example.com")
+    .to("to@example.com")
+    .subject("subject")
+    .body("body")
+    .build();
+
+    assert!(message.is_ok());
+}
+
+#[test]
+fn test_smtp_message_missing_from() {
+    let message = SmtpMessage::builder()
+        .to("to@example.com")
+        .subject("subject")
+        .body("body")
+        .build();
+    
+    assert!(message.is_err());
+}
+
+#[test]
+fn test_smtp_message_missing_to() {
+    let message = SmtpMessage::builder()
+        .from("from@example.com")
+        .subject("subject")
+        .body("body")
+        .build();
+    
+    assert!(message.is_err());
+}
+
+#[test]
+fn test_smtp_message_missing_subject() {
+    let message = SmtpMessage::builder()
+        .from("from@example.com")
+        .to("to@example.com")
+        .body("body")
+        .build();
+    
+    assert!(message.is_err());
+}
+
+#[test]
+fn test_smtp_message_missing_body() {
+    let message = SmtpMessage::builder()
+        .from("from@example.com")
+        .to("to@example.com")
+        .subject("subject")
+        .build();
+    
+    assert!(message.is_err());
 }
