@@ -1,28 +1,42 @@
 use crate::{common::stream::ByteStream, sftp::{sftp_client::SftpClient, sftp_client_config::SftpClientConfig}};
 
 #[tokio::test]
-async fn client_test() {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
-    let config = SftpClientConfig::builder().endpoint("127.0.0.1:2222").auth_basic("user", "password").build().unwrap();
+#[ignore="integration test with local sftp"]
+async fn test_sftp_client() {
+    let config = SftpClientConfig::builder()
+    .host("127.0.0.1")
+    .port(2222)
+    .auth_basic("user", "password")
+    .build()
+    .unwrap();
+
     let mut client = SftpClient::new(config);
 
-    let result = client.put_file("upload/file_bytes.txt").from_bytes("hello world").await;
+    let stream = ByteStream::from("hello world");
+    let result = client.put_file("upload/file.txt").from_stream(stream).await;
     assert!(result.is_ok());
 
-    let result = client.get_file("upload/file_bytes.txt").as_bytes().await;
-    assert!(result.is_ok());
-    tracing::info!("{:?}", result.unwrap());
-
-    let result = client.delete_file("upload/file_bytes.txt").await;
+    let result = client.get_file("upload/file.txt").await;
     assert!(result.is_ok());
 
-    let result = client.put_file("upload/file_stream.txt").from_stream(ByteStream::from("hello world")).await;
+    let result = client.delete_file("upload/file.txt").await;
     assert!(result.is_ok());
+}
 
-    let result = client.get_file("upload/file_stream.txt").as_stream().await;
-    assert!(result.is_ok());
-    tracing::info!("{:?}", result.unwrap().to_bytes().await);
+#[test]
+fn test_sftp_config() {
+    let config = SftpClientConfig::builder()
+    .host("127.0.0.1")
+    .port(2222)
+    .auth_basic("user", "password")
+    .build();
+    assert!(config.is_ok());
 
-    let result = client.delete_file("upload/file_stream.txt").await;
-    assert!(result.is_ok());
+    let config = config.unwrap();
+    assert_eq!(config.host, "127.0.0.1");
+    assert_eq!(config.port, 2222);
+
+    let auth_basic = config.auth_basic.unwrap();
+    assert_eq!(auth_basic.user, "user");
+    assert_eq!(auth_basic.password, "password");
 }
