@@ -1,10 +1,13 @@
 use crate::smtp::{smtp_client::SmtpClient, smtp_client_config::SmtpClientConfig, smtp_message::SmtpMessage, smtp_security::SmtpSecurity};
 
 #[tokio::test]
-async fn client_test() {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
-
-    let config = SmtpClientConfig::new("127.0.0.1", 1025, SmtpSecurity::None, None, None);
+async fn test_smtp_client() {
+    let config = SmtpClientConfig::builder()
+    .host("127.0.0.1")
+    .port(1025)
+    .security(SmtpSecurity::None)
+    .build()
+    .unwrap();
     let client = SmtpClient::new(config);
 
     let message = SmtpMessage::new()
@@ -16,6 +19,74 @@ async fn client_test() {
 
     let res = client.send(message).await;
 
-    tracing::info!(?res);
     assert!(res.is_ok());
+}
+
+#[test]
+fn test_smtp_config_builder_success() {
+    let config = SmtpClientConfig::builder()
+        .host("smtp.example.com")
+        .port(587)
+        .security(SmtpSecurity::StartTls)
+        .username("user@example.com")
+        .password("password123")
+        .build()
+        .unwrap();
+
+    assert_eq!(config.host(), "smtp.example.com");
+    assert_eq!(config.port(), 587);
+    assert_eq!(config.security(), &SmtpSecurity::StartTls);
+    assert_eq!(config.username(), Some("user@example.com"));
+    assert_eq!(config.password(), Some("password123"));
+}
+
+#[test]
+fn test_smtp_builder_missing_host() {
+    let result = SmtpClientConfig::builder()
+        .port(587)
+        .security(SmtpSecurity::StartTls)
+        .build();
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("host is required"));
+}
+
+#[test]
+fn test_smtp_builder_missing_port() {
+    let result = SmtpClientConfig::builder()
+        .host("smtp.example.com")
+        .security(SmtpSecurity::StartTls)
+        .build();
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("port is required"));
+}
+
+#[test]
+fn test_smtp_builder_missing_security() {
+    let result = SmtpClientConfig::builder()
+        .host("smtp.example.com")
+        .port(587)
+        .build();
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("security is required"));
+}
+
+#[test]
+fn test_smtp_config_getters() {
+    let config = SmtpClientConfig::builder()
+        .host("smtp.example.com")
+        .port(25)
+        .security(SmtpSecurity::None)
+        .username("user@example.com")
+        .password("password123")
+        .build()
+        .unwrap();
+
+    assert_eq!(config.host(), "smtp.example.com");
+    assert_eq!(config.port(), 25);
+    assert_eq!(config.security(), &SmtpSecurity::None);
+    assert_eq!(config.username(), Some("user@example.com"));
+    assert_eq!(config.password(), Some("password123"));
 }
