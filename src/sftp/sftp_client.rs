@@ -4,13 +4,12 @@ use anyhow::Ok;
 use bytes::Bytes;
 use russh::{client::Handle, keys::{HashAlg, PrivateKeyWithHashAlg}};
 use russh_sftp::client::SftpSession;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::Mutex};
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 use tokio_util::io::ReaderStream;
 
 use crate::{common::stream::ByteStream, sftp::{sftp_client_config::SftpClientConfig, ssh_client::SshClient}};
 
 pub struct Empty;
-pub struct GetFile;
 pub struct PutFile;
 
 pub struct SftpClient<State> {
@@ -30,13 +29,16 @@ impl SftpClient<Empty> {
         }
     }
 
-    pub fn get_file(&self, path: impl Into<PathBuf>) -> SftpClient<GetFile> {
-        SftpClient {
-            config: self.config.clone(),
-            path: Some(path.into()),
-            session: self.session.clone(),
-            _state: PhantomData
-        }
+    pub async fn get_file(&mut self, path: impl AsRef<Path>) -> anyhow::Result<ByteStream> {
+        tracing::info!("{:?}", path.as_ref());
+        let session = self.get_session().await?;
+        let path = path.as_ref().to_string_lossy();
+        tracing::info!("{:?}", path);
+
+        let remote_file = session.open(path).await?;
+        let reader = ReaderStream::new(remote_file);
+
+        Ok(ByteStream::new(reader))
     }
 
     pub fn put_file(&self, path: impl Into<PathBuf>) -> SftpClient<PutFile> {
@@ -56,30 +58,6 @@ impl SftpClient<Empty> {
         session.remove_file(path).await?;
 
         Ok(())
-    }
-}
-
-impl SftpClient<GetFile> {
-    pub async fn as_bytes(&mut self) -> anyhow::Result<Bytes> {
-        let session = self.get_session().await?;
-        let path = self.path.as_ref().unwrap().to_string_lossy();
-
-        let mut remote_file = session.open(path).await?;
-        let mut buffer = Vec::new();
-        remote_file.read_to_end(&mut buffer).await?;
-        remote_file.shutdown().await?;
-
-        Ok(Bytes::from(buffer))
-    }
-
-    pub async fn as_stream(&mut self) -> anyhow::Result<ByteStream> {
-        let session = self.get_session().await?;
-        let path = self.path.as_ref().unwrap().to_string_lossy();
-
-        let remote_file = session.open(path).await?;
-        let reader = ReaderStream::new(remote_file);
-
-        Ok(ByteStream::new(reader))
     }
 }
 
@@ -134,8 +112,9 @@ impl<State> SftpClient<State> {
 
     async fn connect_session(&self) -> anyhow::Result<Handle<SshClient>> {
         let config = self.config.clone();
-        tracing::trace!("SSH connecting to {}", config.endpoint);
-        let mut session = russh::client::connect(Arc::new(russh::client::Config::default()), &config.endpoint, SshClient {}).await?;
+        let endpoint = format!("{}:{}", config.host, config.port);
+        tracing::trace!("SSH connecting to {}", endpoint);
+        let mut session = russh::client::connect(Arc::new(russh::client::Config::default()), endpoint, SshClient {}).await?;
         
         let mut authenticated = false;
 
