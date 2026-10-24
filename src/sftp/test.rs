@@ -1,7 +1,7 @@
-use crate::{common::stream::ByteStream, sftp::{sftp_client::SftpClient, sftp_client_config::SftpClientConfig}};
+use crate::sftp::{sftp_client::SftpClient, sftp_client_config::SftpClientConfig};
 
 #[tokio::test]
-#[ignore="integration test with local sftp"]
+#[ignore="integration test with local sftp server"]
 async fn test_sftp_client() {
     let config = SftpClientConfig::builder()
     .host("127.0.0.1")
@@ -12,12 +12,13 @@ async fn test_sftp_client() {
 
     let mut client = SftpClient::new(config);
 
-    let stream = ByteStream::from("hello world");
-    let result = client.put_file("upload/file.txt").from_stream(stream).await;
+    let result = client.put_file("upload/file.txt").body("hello_sftp").await;
     assert!(result.is_ok());
 
     let result = client.get_file("upload/file.txt").await;
     assert!(result.is_ok());
+    let body = result.unwrap().to_string().await.unwrap();
+    assert_eq!(body, "hello_sftp");
 
     let result = client.delete_file("upload/file.txt").await;
     assert!(result.is_ok());

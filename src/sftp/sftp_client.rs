@@ -1,13 +1,12 @@
 use std::{marker::PhantomData, path::{Path, PathBuf}, sync::Arc};
 
 use anyhow::Ok;
-use bytes::Bytes;
 use russh::{client::Handle, keys::{HashAlg, PrivateKeyWithHashAlg}};
 use russh_sftp::client::SftpSession;
 use tokio::{io::AsyncWriteExt, sync::Mutex};
 use tokio_util::io::ReaderStream;
 
-use crate::{common::stream::ByteStream, sftp::{sftp_client_config::SftpClientConfig, ssh_client::SshClient}};
+use crate::{common::stream::{ByteStream, IntoByteStream}, sftp::{sftp_client_config::SftpClientConfig, ssh_client::SshClient}};
 
 pub struct Empty;
 pub struct PutFile;
@@ -62,22 +61,10 @@ impl SftpClient<Empty> {
 }
 
 impl SftpClient<PutFile> {
-    pub async fn from_bytes(&mut self, bytes: impl Into<Bytes>) -> anyhow::Result<()> {
+    pub async fn body(&mut self, stream: impl IntoByteStream) -> anyhow::Result<()> {
         let session = self.get_session().await?;
         let path = self.path.as_ref().unwrap().to_string_lossy();
-        tracing::trace!("SFTP uploading bytes to {:?}", path);
-
-        let mut remote_file = session.create(path).await?;
-        remote_file.write_all(&bytes.into()).await?;
-        remote_file.shutdown().await?;
-
-        tracing::trace!("SFTP upload complete");
-        Ok(())
-    }
-
-    pub async fn from_stream(&mut self, mut stream: ByteStream) -> anyhow::Result<()> {
-        let session = self.get_session().await?;
-        let path = self.path.as_ref().unwrap().to_string_lossy();
+        let mut stream = stream.into_stream();
         tracing::trace!("SFTP uploading bytes to {:?}", path);
 
         let mut remote_file = session.create(path).await?;
