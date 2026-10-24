@@ -14,11 +14,13 @@ async fn test_s3_client() {
 
     let client = S3Client::new(config);
 
-    let result = client.bucket("test").put_object("test.txt").body("bytestream").await;
+    let result = client.bucket("test").put_object("test.txt").body("hello_s3").await;
     assert!(result.is_ok());
 
     let result = client.bucket("test").get_object("test.txt").await;
     assert!(result.is_ok());
+    let body = result.unwrap().to_string().await.unwrap();
+    assert_eq!(body, "hello_s3");
 
     let result = client.bucket("test").delete_object("test.txt").await;
     assert!(result.is_ok());

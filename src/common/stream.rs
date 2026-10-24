@@ -34,6 +34,10 @@ impl ByteStream {
         Ok(buffer.freeze())
     }
 
+    pub async fn to_string(self) -> anyhow::Result<String> {
+        Ok(String::from_utf8(self.to_bytes().await?.to_vec())?)
+    }
+
     pub async fn next(&mut self) -> Option<anyhow::Result<Bytes>> {
         match self.0.next().await {
             Some(Ok(bytes)) => Some(Ok(bytes)),
