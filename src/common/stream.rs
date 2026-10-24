@@ -70,3 +70,37 @@ impl From<&str> for ByteStream {
         Self::from(Bytes::copy_from_slice(s.as_bytes()))
     }
 }
+
+pub trait IntoByteStream {
+    fn into_stream(self) -> ByteStream;
+}
+
+impl IntoByteStream for ByteStream {
+    fn into_stream(self) -> ByteStream {
+        self
+    }
+}
+
+impl IntoByteStream for Bytes {
+    fn into_stream(self) -> ByteStream {
+        ByteStream::from(self)
+    }
+}
+
+impl IntoByteStream for Vec<u8> {
+    fn into_stream(self) -> ByteStream {
+        ByteStream::from(self)
+    }
+}
+
+impl IntoByteStream for String {
+    fn into_stream(self) -> ByteStream {
+        ByteStream::from(self)
+    }
+}
+
+impl IntoByteStream for &str {
+    fn into_stream(self) -> ByteStream {
+        ByteStream::from(self.to_owned())
+    }
+}

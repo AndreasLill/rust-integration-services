@@ -2,15 +2,13 @@ use std::{marker::PhantomData, sync::Arc};
 
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_s3::{Client, config::{Credentials, SharedCredentialsProvider}, types::{CompletedMultipartUpload, CompletedPart}};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use tokio_util::io::ReaderStream;
 
-use crate::{common::stream::ByteStream, s3::s3_client_config::S3ClientConfig};
+use crate::{common::stream::{ByteStream, IntoByteStream}, s3::s3_client_config::S3ClientConfig};
 
 pub struct NoBucket;
 pub struct HasBucket;
-
-pub struct GetObject;
 pub struct PutObject;
 
 pub struct S3Client<State> {
@@ -34,12 +32,13 @@ impl S3Client<NoBucket> {
         let creds = Credentials::new(config.access_key.unwrap_or(String::new()), config.secret_key.unwrap_or(String::new()), None, None, "static");
         let provider = SharedCredentialsProvider::new(creds);
         let region = Region::new(config.region.unwrap_or(String::from("auto")));
+        let endpoint = format!("{}:{}", config.host, config.port);
         
         let sdk_config = SdkConfig::builder()
         .region(region)
         .credentials_provider(provider)
         .behavior_version(BehaviorVersion::latest())
-        .endpoint_url(config.endpoint.as_str());
+        .endpoint_url(endpoint.as_str());
 
         Client::new(&sdk_config.build())
     }
@@ -55,13 +54,16 @@ impl S3Client<NoBucket> {
 }
 
 impl S3Client<HasBucket> {
-    pub fn get_object(&self, key: impl Into<String>) -> S3Client<GetObject> {
-        S3Client {
-            client: self.client.clone(),
-            bucket: self.bucket.clone(),
-            key: Some(key.into()),
-            _state: PhantomData
-        }
+    pub async fn get_object(&self, key: impl AsRef<str>) -> anyhow::Result<ByteStream> {
+        let result = self.client
+            .get_object()
+            .bucket(self.bucket.as_ref().unwrap())
+            .key(key.as_ref())
+            .send()
+            .await?;
+
+        let stream = ReaderStream::new(result.body.into_async_read());
+        Ok(ByteStream::new(stream))
     }
 
     pub fn put_object(&self, key: impl Into<String>) -> S3Client<PutObject> {
@@ -85,48 +87,11 @@ impl S3Client<HasBucket> {
     }
 }
 
-impl S3Client<GetObject> {
-    pub async fn as_bytes(&self) -> anyhow::Result<Bytes> {
-        let result = self.client
-            .get_object()
-            .bucket(self.bucket.as_ref().unwrap())
-            .key(self.key.as_ref().unwrap())
-            .send()
-            .await?;
-
-        Ok(result.body.collect().await?.into_bytes())
-    }
-
-    pub async fn as_stream(&self) -> anyhow::Result<ByteStream> {
-        let result = self.client
-            .get_object()
-            .bucket(self.bucket.as_ref().unwrap())
-            .key(self.key.as_ref().unwrap())
-            .send()
-            .await?;
-
-        let stream = ReaderStream::new(result.body.into_async_read());
-        Ok(ByteStream::new(stream))
-    }
-}
-
 impl S3Client<PutObject> {
-    pub async fn from_bytes(&self, bytes: impl Into<Bytes>) -> anyhow::Result<()> {
-        let bytes = bytes.into();
-        let _result = self.client
-            .put_object()
-            .bucket(self.bucket.as_ref().unwrap())
-            .key(self.key.as_ref().unwrap())
-            .body(bytes.into())
-            .send()
-            .await?;
-
-        Ok(())
-    }
-
-    pub async fn from_stream(&self, stream: ByteStream) -> anyhow::Result<()> {
+    pub async fn body(&self, stream: impl IntoByteStream) -> anyhow::Result<()> {
         let bucket = self.bucket.as_ref().unwrap();
         let key = self.key.as_ref().unwrap();
+        let stream = stream.into_stream();
 
         let create_res = self.client
             .create_multipart_upload()
