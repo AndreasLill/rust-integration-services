@@ -1,6 +1,6 @@
 [package]
 name = "rust-integration-services"
-version = "0.5.32"
+version = "0.5.33"
 edition = "2024"
 authors = ["Andreas Lill"]
 description = "A modern, fast, and lightweight integration library written in Rust, designed for memory safety and stability."
@@ -28,8 +28,8 @@ http-body-util = { version = "0.1.5", optional = true }
 matchit = { version = "0.9.2", optional = true }
 rustls = { version = "0.23.46", optional = true, features = ["ring"] }
 rustls-native-certs = { version = "0.8.5", optional = true }
-tokio-rustls = { version = "0.26.6", optional = true } 
-webpki-roots = { version = "1.0.10", optional = true }
+tokio-rustls = { version = "0.26.6", optional = true }
+webpki-roots = { version = "1.0.11", optional = true }
 rustls-pki-types = { version = "1.15.1", optional = true }
 regex = { version = "1.13.1", optional = true }
 chrono = { version = "0.4.45", optional = true }
@@ -37,7 +37,7 @@ croner = { version = "4.0.2", optional = true }
 russh = { version = "0.64.1", optional = true, default-features = false, features = [ "ring", "rsa" ] }
 russh-sftp =  { version = "3.0.1", optional = true }
 lettre = { version = "0.11.23", optional = true, default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
-aws-sdk-s3 = { version = "1.154.0", optional = true, default-features = false, features = ["rustls", "rt-tokio"] }
+aws-sdk-s3 = { version = "1.155.0", optional = true, default-features = false, features = ["rustls", "rt-tokio"] }
 aws-config = { version = "1.13.0", optional = true, default-features = false, features = ["rustls", "rt-tokio"] }
 
 [dev-dependencies]

@@ -1,48 +1,47 @@
-use std::marker::PhantomData;
-
 #[derive(Debug, Clone)]
 pub struct S3ClientConfig {
-    pub endpoint: String,
+    pub host: String,
+    pub port: u16,
     pub region: Option<String>,
     pub access_key: Option<String>,
     pub secret_key: Option<String>,
 }
+
 impl S3ClientConfig {
-    pub fn builder() -> S3ClientConfigBuilder<SetEndpoint> {
-        S3ClientConfigBuilder {
-            endpoint: None,
+    pub fn builder() -> S3ClientConfigBuilder {
+        S3ClientConfigBuilder::new()
+    }
+}
+
+pub struct S3ClientConfigBuilder {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub region: Option<String>,
+    pub access_key: Option<String>,
+    pub secret_key: Option<String>,
+}
+
+impl S3ClientConfigBuilder {
+    pub fn new() -> Self {
+        Self {
+            host: None,
+            port: None,
             region: None,
             access_key: None,
             secret_key: None,
-            _state: PhantomData
         }
     }
-}
 
-pub struct SetEndpoint;
-pub struct Optional;
-
-pub struct S3ClientConfigBuilder<State> {
-    pub endpoint: Option<String>,
-    pub region: Option<String>,
-    pub access_key: Option<String>,
-    pub secret_key: Option<String>,
-    _state: PhantomData<State>,
-}
-
-impl S3ClientConfigBuilder<SetEndpoint> {
-    pub fn endpoint(self, endpoint: impl Into<String>) -> S3ClientConfigBuilder<Optional> {
-        S3ClientConfigBuilder {
-            endpoint: Some(endpoint.into()),
-            region: self.region,
-            access_key: self.access_key,
-            secret_key: self.secret_key,
-            _state: PhantomData
-        }
+    pub fn host(mut self, host: impl Into<String>) -> Self {
+        self.host = Some(host.into());
+        self
     }
-}
 
-impl S3ClientConfigBuilder<Optional> {
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
     pub fn region(mut self, region: impl Into<String>) -> Self {
         self.region = Some(region.into());
         self
@@ -59,8 +58,16 @@ impl S3ClientConfigBuilder<Optional> {
     }
 
     pub fn build(self) -> anyhow::Result<S3ClientConfig> {
+        if self.host.is_none() {
+            anyhow::bail!("host is required")
+        }
+        if self.port.is_none() {
+            anyhow::bail!("port is required")
+        }
+
         Ok(S3ClientConfig {
-            endpoint: self.endpoint.ok_or_else(|| anyhow::anyhow!("Endpoint not found"))?,
+            host: self.host.unwrap(),
+            port: self.port.unwrap(),
             region: self.region,
             access_key: self.access_key,
             secret_key: self.secret_key
