@@ -1,16 +1,13 @@
 use std::{marker::PhantomData, path::{Path, PathBuf}};
 
-use bytes::Bytes;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
-use crate::common::stream::ByteStream;
+use crate::common::stream::{ByteStream, IntoByteStream};
 
 pub struct Empty;
 pub struct Write;
-pub struct Read;
 pub struct Copy;
-pub struct Move;
 
 pub struct FileClient<State> {
     path: Option<PathBuf>,
@@ -25,28 +22,21 @@ impl FileClient<Empty> {
         }
     }
 
-    pub fn write_to(&self, path: impl Into<PathBuf>) -> FileClient<Write> {
+    pub fn write(&self, path: impl Into<PathBuf>) -> FileClient<Write> {
         FileClient {
             path: Some(path.into()),
             _state: PhantomData
         }
     }
 
-    pub fn read_from(&self, path: impl Into<PathBuf>) -> FileClient<Read> {
-        FileClient {
-            path: Some(path.into()),
-            _state: PhantomData
-        }
+    pub async fn read(&self, path: impl AsRef<Path>) -> anyhow::Result<ByteStream> {
+        let file = tokio::fs::File::open(path.as_ref()).await?;
+        let reader = ReaderStream::new(file);
+
+        Ok(ByteStream::new(reader))
     }
 
-    pub fn copy_from(&self, path: impl Into<PathBuf>) -> FileClient<Copy> {
-        FileClient {
-            path: Some(path.into()),
-            _state: PhantomData
-        }
-    }
-
-    pub fn move_from(&self, path: impl Into<PathBuf>) -> FileClient<Move> {
+    pub fn copy(&self, path: impl Into<PathBuf>) -> FileClient<Copy> {
         FileClient {
             path: Some(path.into()),
             _state: PhantomData
@@ -61,16 +51,9 @@ impl FileClient<Empty> {
 }
 
 impl FileClient<Write> {
-    pub async fn from_bytes(&self, bytes: impl Into<Bytes>) -> anyhow::Result<()> {
+    pub async fn body(&self, stream: impl IntoByteStream) -> anyhow::Result<()> {
         let mut file = tokio::fs::File::create(&self.path.as_ref().unwrap()).await?;
-        file.write_all(&bytes.into()).await?;
-        file.flush().await?;
-
-        Ok(())
-    }
-
-    pub async fn from_stream(&self, mut stream: ByteStream) -> anyhow::Result<()> {
-        let mut file = tokio::fs::File::create(&self.path.as_ref().unwrap()).await?;
+        let mut stream = stream.into_stream();
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
@@ -82,35 +65,9 @@ impl FileClient<Write> {
     }
 }
 
-impl FileClient<Read> {
-    pub async fn as_bytes(&self) -> anyhow::Result<Bytes> {
-        let mut file = tokio::fs::File::open(&self.path.as_ref().unwrap()).await?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).await?;
-
-        Ok(Bytes::from(buffer))
-    }
-
-    pub async fn as_stream(&self) -> anyhow::Result<ByteStream> {
-        let file = tokio::fs::File::open(&self.path.as_ref().unwrap()).await?;
-        let reader = ReaderStream::new(file);
-
-        Ok(ByteStream::new(reader))
-    }
-}
-
 impl FileClient<Copy> {
-    pub async fn copy_to(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    pub async fn to(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         tokio::fs::copy(&self.path.as_ref().unwrap(), path.as_ref()).await?;
-
-        Ok(())
-    }
-}
-
-impl FileClient<Move> {
-    pub async fn move_to(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        tokio::fs::copy(&self.path.as_ref().unwrap(), path.as_ref()).await?;
-        tokio::fs::remove_file(&self.path.as_ref().unwrap()).await?;
 
         Ok(())
     }
