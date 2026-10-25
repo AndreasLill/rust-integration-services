@@ -43,7 +43,7 @@ impl HttpServer {
             TlsAcceptor::from(Arc::new(tls_config))
         });
 
-        let host = format!("{}:{}", self.config.ip, self.config.port);
+        let host = format!("{}:{}", self.config.host, self.config.port);
         let listener = TcpListener::bind(&host).await.expect("Failed to start TCP Listener");
         let mut sigterm = signal(SignalKind::terminate()).expect("Failed to start SIGTERM signal receiver");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to start SIGINT signal receiver");
@@ -157,7 +157,7 @@ impl HttpServer {
                     },
                     None => {
                         tracing::error!("{:?}", error);
-                        HttpResponse::builder().status(500).body_empty().unwrap()
+                        HttpResponse::builder().status(500).build().unwrap()
                     },
                 };
 
@@ -203,7 +203,7 @@ impl HttpServer {
                 Ok(Response::from(response))
             },
             Err(_) => {
-                let response = HttpResponse::builder().status(404).body_empty().unwrap();
+                let response = HttpResponse::builder().status(404).build().unwrap();
                 Ok(Response::from(response))
             },
         }

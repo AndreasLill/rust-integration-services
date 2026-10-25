@@ -1,15 +1,16 @@
-use std::{marker::PhantomData, str::FromStr};
+
+use std::marker::PhantomData;
 
 use anyhow::Error;
 use bytes::Bytes;
 use futures::StreamExt;
-use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::BoxBody};
-use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::{HeaderName, HeaderValue}};
+use http_body_util::{BodyExt, Empty, StreamBody, combinators::BoxBody};
+use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
 
-use crate::common::stream::ByteStream;
+use crate::common::stream::{ByteStream, IntoByteStream};
 
-pub struct Final;
-pub struct SetStatus;
+pub struct Build;
+pub struct Status;
 
 #[derive(Debug)]
 pub struct HttpResponse {
@@ -20,11 +21,8 @@ pub struct HttpResponse {
 impl HttpResponse {
 
     /// Create a new response using builder.
-    pub fn builder() -> HttpResponseBuilder<SetStatus>  {
-        HttpResponseBuilder {
-            builder: Response::builder(),
-            _state: PhantomData
-        }
+    pub fn builder() -> HttpResponseBuilder<Status> {
+        HttpResponseBuilder::new()
     }
 
     /// Create a new response from hyper parts.
@@ -35,11 +33,7 @@ impl HttpResponse {
         }
     }
 
-    /// Returns the boxed body.
-    /// 
-    /// Used for moving body between requests/responses.
-    ///
-    /// **This consumes the HttpResponse**
+    /// Returns the body.
     pub fn body(self) -> ByteStream {
         let stream = self.body.into_data_stream();
         ByteStream::new(stream)
@@ -48,19 +42,6 @@ impl HttpResponse {
     /// Returns the status.
     pub fn status(&self) -> u16 {
         self.parts.status.as_u16()
-    }
-
-    /// Add a header.
-    pub fn add_header(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> anyhow::Result<()> {
-        let key = HeaderName::from_str(key.as_ref())?;
-        let value = value.as_ref().parse()?;
-        self.parts.headers.insert(key, value);
-        Ok(())
-    }
-
-    /// Remove a header.
-    pub fn remove_header(&mut self, key: impl AsRef<str>) {
-        self.parts.headers.remove(key.as_ref());
     }
 
     /// Returns a single header by key.
@@ -76,49 +57,50 @@ impl HttpResponse {
 
 pub struct HttpResponseBuilder<State> {
     builder: hyper::http::response::Builder,
+    body: Option<ByteStream>,
     _state: PhantomData<State>
 }
 
-impl HttpResponseBuilder<SetStatus>  {
-    pub fn status(mut self, status: u16) -> HttpResponseBuilder<Final> {
+impl HttpResponseBuilder<Status>  {
+    pub fn new() -> HttpResponseBuilder<Status> {
+        HttpResponseBuilder {
+            builder: Response::builder(),
+            body: None,
+            _state: PhantomData,
+        }
+    }
+
+    pub fn status(mut self, status: u16) -> HttpResponseBuilder<Build> {
         self.builder = self.builder.status(status);
         HttpResponseBuilder {
             builder: self.builder,
+            body: None,
             _state: PhantomData
         }
     }
 }
 
-impl HttpResponseBuilder<Final> {
-
-    /// Finish the builder and the create the response with an empty body.
-    pub fn body_empty(self) -> anyhow::Result<HttpResponse> {
-        let body = Empty::new().map_err(|e| match e {}).boxed();
-        let response = self.builder.body(body)?;
-        Ok(HttpResponse::from(response))
+impl HttpResponseBuilder<Build> {
+    /// Set the response body.
+    pub fn body(mut self, body: impl IntoByteStream) -> Self {
+        self.body = Some(body.into_stream());
+        self
     }
 
-    /// Finish the builder and the create the response with a boxed body.
-    /// 
-    /// **Used for moving a body from another request or response.**
-    pub fn body_boxed(self, body: BoxBody<Bytes, Error>) -> anyhow::Result<HttpResponse> {
-        let response = self.builder.body(body)?;
-        Ok(HttpResponse::from(response))
-    }
+    /// Finish the builder and the create the response.
+    pub fn build(self) -> anyhow::Result<HttpResponse> {
+        let response: Response<BoxBody<Bytes, Error>>;
 
-    /// Finish the builder and the create the response with a body of bytes in memory.
-    pub fn body_bytes(self, body: impl Into<Bytes>) -> anyhow::Result<HttpResponse> {
-        let body = Full::from(body.into()).map_err(|e| match e {}).boxed();
-        let response = self.builder.body(body)?;
-        Ok(HttpResponse::from(response))
-    }
+        if let Some(body) = self.body {
+            let mapped_stream = body.inner_stream().map(|res| { res.map(Frame::data) });
+            let body = StreamBody::new(mapped_stream);
+            let boxed_body: BoxBody<Bytes, Error> = BodyExt::boxed(body);
+            response = self.builder.body(boxed_body)?;
+        } else {
+            let body = Empty::new().map_err(|e| match e {}).boxed();
+            response = self.builder.body(body)?;
+        }
 
-    /// Finish the builder and the create the response with a body of bytes as a stream.
-    pub fn body_stream(self, stream: ByteStream) -> anyhow::Result<HttpResponse> {
-        let mapped_stream = stream.inner_stream().map(|res| { res.map(Frame::data) });
-        let body = StreamBody::new(mapped_stream);
-        let boxed_body: BoxBody<Bytes, Error> = BodyExt::boxed(body);
-        let response: Response<BoxBody<Bytes, Error>> = self.builder.body(boxed_body)?;
         Ok(HttpResponse::from(response))
     }
 
