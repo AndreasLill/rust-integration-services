@@ -223,7 +223,12 @@ impl HttpServer {
                 }
 
                 // Return 404 if route was not found.
-                let response = HttpResponse::builder().status(404).build().unwrap();
+                let mut response = HttpResponse::builder().status(404).build().unwrap();
+
+                for handler in after.iter() {
+                    response = handler(response).await;
+                }
+
                 Ok(Response::from(response))
             },
         }
