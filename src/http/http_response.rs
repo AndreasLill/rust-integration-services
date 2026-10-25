@@ -1,11 +1,11 @@
 
-use std::marker::PhantomData;
+use std::{borrow::Cow, marker::PhantomData};
 
 use anyhow::Error;
 use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::{BodyExt, Empty, StreamBody, combinators::BoxBody};
-use hyper::{HeaderMap, Response, body::{Frame, Incoming}, header::HeaderValue};
+use hyper::{Response, body::{Frame, Incoming}};
 
 use crate::common::stream::{ByteStream, IntoByteStream};
 
@@ -44,14 +44,19 @@ impl HttpResponse {
         self.parts.status.as_u16()
     }
 
-    /// Returns a single header by key.
-    pub fn header(&self, key: impl AsRef<str>) -> Option<&HeaderValue> {
-        self.parts.headers.get(key.as_ref())
+    /// Returns the raw bytes of a header value by key, or `None` if the header is not present.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&[u8]> {
+        self.parts.headers.get(key.as_ref()).map(|value| value.as_bytes())
     }
 
-    /// Returns all headers.
-    pub fn headers(&self) -> &HeaderMap {
-        &self.parts.headers
+    /// Returns a header value as a string by key, or `None` if the header is not present.
+    pub fn header_str(&self, key: impl AsRef<str>) -> Option<Cow<'_, str>> {
+        self.parts.headers.get(key.as_ref()).map(|value| value.as_bytes()).map(String::from_utf8_lossy)
+    }
+
+    /// Returns an iterator over all headers, yielding each header name and its value as a byte slice.
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.parts.headers.iter().map(|(key, value)| {(key.as_str(), value.as_bytes())})
     }
 }
 
@@ -104,16 +109,21 @@ impl HttpResponseBuilder<Build> {
         Ok(HttpResponse::from(response))
     }
 
-    /// Add a header to the response.
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.builder = self.builder.header(key.into(), value.into());
+    /// Add a header to the request.
+    pub fn header(mut self, key: impl AsRef<str>, value: impl AsRef<[u8]>) -> Self {
+        self.builder = self.builder.header(key.as_ref(), value.as_ref());
         self
     }
 
     /// Copy headers from another request or response.
-    pub fn headers(mut self, headers: &HeaderMap) -> Self {
-        for (key, value) in headers.iter() {
-            self.builder = self.builder.header(key, value);
+    pub fn headers<I, K, V>(mut self, headers: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<[u8]>,
+    {
+        for (key, value) in headers {
+            self.builder = self.builder.header(key.as_ref(), value.as_ref());
         }
         self
     }

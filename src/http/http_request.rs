@@ -1,14 +1,13 @@
+use std::borrow::Cow;
 use std::marker::PhantomData;
-use std::str::FromStr;
 
 use anyhow::Error;
 use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::{Empty, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
-use hyper::{HeaderMap, Uri};
+use hyper::Uri;
 use hyper::body::Frame;
-use hyper::header::{HeaderName, HeaderValue};
 use hyper::{Request, body::Incoming};
 
 use crate::common::stream::{ByteStream, IntoByteStream};
@@ -83,27 +82,19 @@ impl HttpRequest {
         self.parts.uri.scheme_str()
     }
 
-    /// Add a header.
-    pub fn add_header(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> anyhow::Result<()> {
-        let key = HeaderName::from_str(key.as_ref())?;
-        let value = value.as_ref().parse()?;
-        self.parts.headers.insert(key, value);
-        Ok(())
+    /// Returns the raw bytes of a header value by key, or `None` if the header is not present.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&[u8]> {
+        self.parts.headers.get(key.as_ref()).map(|value| value.as_bytes())
     }
 
-    /// Remove a header.
-    pub fn remove_header(&mut self, key: impl AsRef<str>) {
-        self.parts.headers.remove(key.as_ref());
+    /// Returns a header value as a string by key, or `None` if the header is not present.
+    pub fn header_str(&self, key: impl AsRef<str>) -> Option<Cow<'_, str>> {
+        self.parts.headers.get(key.as_ref()).map(|value| value.as_bytes()).map(String::from_utf8_lossy)
     }
 
-    /// Returns a single header by key.
-    pub fn header(&self, key: impl AsRef<str>) -> Option<&HeaderValue> {
-        self.parts.headers.get(key.as_ref())
-    }
-
-    /// Returns all headers.
-    pub fn headers(&self) -> &HeaderMap {
-        &self.parts.headers
+    /// Returns an iterator over all headers, yielding each header name and its value as a byte slice.
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.parts.headers.iter().map(|(key, value)| {(key.as_str(), value.as_bytes())})
     }
 
     // Returns a param by key.
@@ -261,15 +252,20 @@ impl HttpRequestBuilder<Build> {
     }
 
     /// Add a header to the request.
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.builder = self.builder.header(key.into(), value.into());
+    pub fn header(mut self, key: impl AsRef<str>, value: impl AsRef<[u8]>) -> Self {
+        self.builder = self.builder.header(key.as_ref(), value.as_ref());
         self
     }
 
     /// Copy headers from another request or response.
-    pub fn headers(mut self, headers: &HeaderMap) -> Self {
+    pub fn headers<I, K, V>(mut self, headers: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<[u8]>,
+    {
         for (key, value) in headers {
-            self.builder = self.builder.header(key, value);
+            self.builder = self.builder.header(key.as_ref(), value.as_ref());
         }
         self
     }
