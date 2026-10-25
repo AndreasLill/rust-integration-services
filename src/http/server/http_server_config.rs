@@ -5,18 +5,40 @@ use rustls::{ServerConfig};
 use crate::http::crypto::Crypto;
 
 pub struct HttpServerConfig {
-    pub ip: String,
+    pub host: String,
     pub port: u16,
     pub tls_config: Option<ServerConfig>,
 }
 
 impl HttpServerConfig {
-    pub fn new(ip: impl Into<String>, port: u16) -> Self {
-        HttpServerConfig {
-            ip: ip.into(),
-            port,
-            tls_config: None,
+    pub fn builder() -> HttpServerConfigBuilder {
+        HttpServerConfigBuilder::new()
+    }
+}
+
+pub struct HttpServerConfigBuilder {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub tls_config: Option<ServerConfig>,
+}
+
+impl HttpServerConfigBuilder {
+    pub fn new() -> Self {
+        Self {
+            host: None,
+            port: None,
+            tls_config: None
         }
+    }
+
+    pub fn host(mut self, host: impl Into<String>) -> Self {
+        self.host = Some(host.into());
+        self
+    }
+
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
     }
 
     /// Enables TLS for incoming connections using the provided server certificate and private key in `.pem` format and
@@ -35,5 +57,20 @@ impl HttpServerConfig {
 
         self.tls_config = Some(tls_config);
         self
+    }
+
+    pub fn build(self) -> anyhow::Result<HttpServerConfig> {
+        if self.host.is_none() {
+            anyhow::bail!("host is required")
+        }
+        if self.port.is_none() {
+            anyhow::bail!("port is required")
+        }
+
+        Ok(HttpServerConfig {
+            host: self.host.unwrap(),
+            port: self.port.unwrap(),
+            tls_config: self.tls_config
+        })
     }
 }

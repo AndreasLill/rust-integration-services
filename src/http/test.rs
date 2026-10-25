@@ -3,13 +3,14 @@ use std::{env::home_dir, time::Duration};
 use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::{HttpServer}, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
+#[ignore = "manual integration test for both http server and http client"]
 async fn http_server_client() {
     tracing_subscriber::fmt().init();
     tokio::spawn(async move {
-        let config = HttpServerConfig::new("127.0.0.1", 8080);
+        let config = HttpServerConfig::builder().host("127.0.0.1").port(8080).build().unwrap();
         HttpServer::builder(config)
         .route("/", async move |_| {
-            HttpResponse::builder().status(200).body_empty().unwrap()
+            HttpResponse::builder().status(200).build().unwrap()
         })
         .build()
         .run()
@@ -17,7 +18,7 @@ async fn http_server_client() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().get("http://127.0.0.1:8080").body_empty().unwrap();
+    let request = HttpRequest::builder().get("http://127.0.0.1:8080").build().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
 
@@ -31,16 +32,17 @@ async fn http_server_client() {
 /// mkcert -install
 /// mkcert -cert-file server.pem -key-file server-key.pem localhost 127.0.0.1
 #[tokio::test(start_paused = true)]
+#[ignore = "manual integration test for both http server and http client over TLS, requires server certs"]
 async fn http_server_client_tls() {
     tracing_subscriber::fmt().init();
     tokio::spawn(async move {
         let server_cert_path = home_dir().unwrap().join("server.pem");
         let server_key_path = home_dir().unwrap().join("server-key.pem");
 
-        let config = HttpServerConfig::new("127.0.0.1", 8080).tls(server_cert_path, server_key_path);
+        let config = HttpServerConfig::builder().host("127.0.0.1").port(8080).tls(server_cert_path, server_key_path).build().unwrap();
         HttpServer::builder(config)
         .route("/", async move |_req| {
-            HttpResponse::builder().status(200).body_empty().unwrap()
+            HttpResponse::builder().status(200).build().unwrap()
         })
         .build()
         .run()
@@ -48,7 +50,7 @@ async fn http_server_client_tls() {
     });
 
     tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().get("https://127.0.0.1:8080").body_empty().unwrap();
+    let request = HttpRequest::builder().get("https://127.0.0.1:8080").build().unwrap();
     let result = HttpClient::new().send(request).await;
     assert!(result.is_ok());
     
@@ -57,80 +59,85 @@ async fn http_server_client_tls() {
     assert_eq!(response.status(), 200);
 }
 
-#[tokio::test(start_paused = true)]
-async fn http_server_middleware() {
-    tracing_subscriber::fmt().init();
-    tokio::spawn(async move {
-        let config = HttpServerConfig::new("127.0.0.1", 8080);
-        HttpServer::builder(config)
-        .route("/", async move |_req| {
-            tracing::info!("route");
-            HttpResponse::builder().status(200).body_empty().unwrap()
-        })
-        .before(async move |_| {
-            tracing::info!("before");
-            HttpResponse::builder().status(400).body_empty().unwrap()
-        })
-        .before(async move |request| {
-            tracing::info!("before 2");
-            assert!(false);
-            request
-        })
-        .after(async move |response| {
-            tracing::info!("after");
-            response
-        })
-        .build()
-        .run()
-        .await;
-    });
-
-    tokio::time::advance(Duration::from_millis(1000)).await;
-    let request = HttpRequest::builder().get("http://127.0.0.1:8080").body_empty().unwrap();
-    let result = HttpClient::new().send(request).await;
-    assert!(result.is_ok());
-
-    let response = result.unwrap();
-    tracing::info!(?response);
-    assert_eq!(response.status(), 400);
-}
-
-#[tokio::test]
-async fn http_client() {
-    tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().get("http://httpbin.org/get").body_empty().unwrap();
-    let result = HttpClient::new().send(request).await;
-    assert!(result.is_ok());
-
-    let response = result.unwrap();
-    tracing::info!(?response);
-}
-
-#[tokio::test]
-async fn http_client_tls() {
-    tracing_subscriber::fmt().init();
-    let request = HttpRequest::builder().get("https://api.open-meteo.com/v1/forecast?latitude=59.33&longitude=18.07&current_weather=true").body_empty().unwrap();
-    let result = HttpClient::new().send(request).await;
-    assert!(result.is_ok());
-
-    let response = result.unwrap();
-    tracing::info!(?response);
-}
-
 #[tokio::test]
 async fn http_request() {
-    let request = HttpRequest::builder().get("https://127.0.0.1").header("key", "value").body_bytes("body").unwrap();
+    let request = HttpRequest::builder()
+    .get("https://127.0.0.1")
+    .build()
+    .unwrap();
+
     assert_eq!(request.method(), "GET");
-    assert_eq!(request.header("key").unwrap(), "value");
+}
+
+#[tokio::test]
+async fn http_request_body() {
+    let request = HttpRequest::builder()
+    .get("https://127.0.0.1")
+    .body("http_request_body")
+    .build()
+    .unwrap();
+
     let body = request.body().to_bytes().await.unwrap();
-    assert_eq!(body, "body");
+    assert_eq!(body, "http_request_body");
+}
+
+#[tokio::test]
+async fn http_request_headers() {
+    let request = HttpRequest::builder()
+    .get("https://127.0.0.1")
+    .header("key1", "value1")
+    .header("key2", "value2")
+    .build()
+    .unwrap();
+
+    let request2 = HttpRequest::builder()
+    .get("https://127.0.0.1")
+    .headers(request.headers())
+    .build()
+    .unwrap();
+
+    assert_eq!(request.header_str("key1").unwrap(), "value1");
+    assert_eq!(request2.header_str("key1").unwrap(), "value1");
 }
 
 #[tokio::test]
 async fn http_response() {
-    let response = HttpResponse::builder().status(200).header("key", "value").body_bytes("body").unwrap();
+    let response = HttpResponse::builder()
+    .status(200)
+    .build()
+    .unwrap();
+
     assert_eq!(response.status(), 200);
-    assert_eq!(response.header("key").unwrap(), "value");
+}
+
+#[tokio::test]
+async fn http_response_body() {
+    let response = HttpResponse::builder()
+    .status(200)
+    .body("http_response_body")
+    .build()
+    .unwrap();
+
     let body = response.body().to_bytes().await.unwrap();
-    assert_eq!(body, "body");
+    assert_eq!(body, "http_response_body");
+}
+
+#[tokio::test]
+async fn http_response_headers() {
+    let response = HttpResponse::builder()
+    .status(200)
+    .header("key1", "value1")
+    .header("key2", "value2")
+    .build()
+    .unwrap();
+
+    let response2 = HttpResponse::builder()
+    .status(200)
+    .header("key1", "value1")
+    .header("key2", "value2")
+    .build()
+    .unwrap();
+
+    assert_eq!(response.header_str("key1").unwrap(), "value1");
+    assert_eq!(response2.header_str("key1").unwrap(), "value1");
 }

@@ -1,20 +1,19 @@
+use std::borrow::Cow;
 use std::marker::PhantomData;
-use std::str::FromStr;
 
 use anyhow::Error;
 use bytes::Bytes;
 use futures::StreamExt;
-use http_body_util::{Empty, Full, StreamBody};
+use http_body_util::{Empty, StreamBody};
 use http_body_util::{BodyExt, combinators::BoxBody};
-use hyper::{HeaderMap, Uri};
+use hyper::Uri;
 use hyper::body::Frame;
-use hyper::header::{HeaderName, HeaderValue};
 use hyper::{Request, body::Incoming};
 
-use crate::common::stream::ByteStream;
+use crate::common::stream::{ByteStream, IntoByteStream};
 
-pub struct Final;
-pub struct SetMethod;
+pub struct Build;
+pub struct Method;
 
 #[derive(Debug)]
 pub struct HttpRequest {
@@ -26,12 +25,8 @@ pub struct HttpRequest {
 impl HttpRequest {
 
     /// Create a new request using builder.
-    pub fn builder() -> HttpRequestBuilder<SetMethod>  {
-        HttpRequestBuilder {
-            builder: Request::builder(),
-            uri_string: None,
-            _state: PhantomData
-        }
+    pub fn builder() -> HttpRequestBuilder<Method>  {
+        HttpRequestBuilder::new()
     }
 
     /// Create a new request from hyper parts.
@@ -87,27 +82,19 @@ impl HttpRequest {
         self.parts.uri.scheme_str()
     }
 
-    /// Add a header.
-    pub fn add_header(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> anyhow::Result<()> {
-        let key = HeaderName::from_str(key.as_ref())?;
-        let value = value.as_ref().parse()?;
-        self.parts.headers.insert(key, value);
-        Ok(())
+    /// Returns the raw bytes of a header value by key, or `None` if the header is not present.
+    pub fn header(&self, key: impl AsRef<str>) -> Option<&[u8]> {
+        self.parts.headers.get(key.as_ref()).map(|value| value.as_bytes())
     }
 
-    /// Remove a header.
-    pub fn remove_header(&mut self, key: impl AsRef<str>) {
-        self.parts.headers.remove(key.as_ref());
+    /// Returns a header value as a string by key, or `None` if the header is not present.
+    pub fn header_str(&self, key: impl AsRef<str>) -> Option<Cow<'_, str>> {
+        self.parts.headers.get(key.as_ref()).map(|value| value.as_bytes()).map(String::from_utf8_lossy)
     }
 
-    /// Returns a single header by key.
-    pub fn header(&self, key: impl AsRef<str>) -> Option<&HeaderValue> {
-        self.parts.headers.get(key.as_ref())
-    }
-
-    /// Returns all headers.
-    pub fn headers(&self) -> &HeaderMap {
-        &self.parts.headers
+    /// Returns an iterator over all headers, yielding each header name and its value as a byte slice.
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.parts.headers.iter().map(|(key, value)| {(key.as_str(), value.as_bytes())})
     }
 
     // Returns a param by key.
@@ -124,139 +111,161 @@ impl HttpRequest {
 pub struct HttpRequestBuilder<State> {
     builder: hyper::http::request::Builder,
     uri_string: Option<String>,
+    body: Option<ByteStream>,
     _state: PhantomData<State>
 }
 
-impl HttpRequestBuilder<SetMethod> {
+impl HttpRequestBuilder<Method> {
+
+    pub fn new() -> HttpRequestBuilder<Method> {
+        HttpRequestBuilder {
+            builder: Request::builder(),
+            uri_string: None,
+            body: None,
+            _state: PhantomData
+        }
+    }
+
     /// Sets the HTTP method to `GET` and assigns the request URI.
-    pub fn get(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn get(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("GET");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `POST` and assigns the request URI.
-    pub fn post(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn post(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("POST");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `PUT` and assigns the request URI.
-    pub fn put(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn put(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("PUT");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `PATCH` and assigns the request URI.
-    pub fn patch(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn patch(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("PATCH");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `DELETE` and assigns the request URI.
-    pub fn delete(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn delete(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("DELETE");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `OPTIONS` and assigns the request URI.
-    pub fn options(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn options(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("OPTIONS");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `HEAD` and assigns the request URI.
-    pub fn head(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn head(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("OPTIONS");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `CONNECT` and assigns the request URI.
-    pub fn connect(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn connect(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("CONNECT");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 
     /// Sets the HTTP method to `TRACE` and assigns the request URI.
-    pub fn trace(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Final> {
+    pub fn trace(mut self, uri: impl Into<String>) -> HttpRequestBuilder<Build> {
         self.builder = self.builder.method("TRACE");
         HttpRequestBuilder {
             builder: self.builder,
             uri_string: Some(uri.into()),
+            body: None,
             _state: PhantomData
         }
     }
 }
 
-impl HttpRequestBuilder<Final> {
+impl HttpRequestBuilder<Build> {
 
-    /// Finish the builder and the create the request with an empty body.
-    pub fn body_empty(self) -> anyhow::Result<HttpRequest> {
-        let uri: Uri = self.uri_string.unwrap().parse()?;
-        let body = Empty::new().map_err(|e| match e {}).boxed();
-        let request = self.builder.uri(&uri).header("Host", uri.host().unwrap()).body(body)?;
-        Ok(HttpRequest::from(request))
+    pub fn body(mut self, body: impl IntoByteStream) -> Self {
+        self.body = Some(body.into_stream());
+        self
     }
 
-    /// Finish the builder and the create the request with a body of bytes in memory.
-    pub fn body_bytes(self, body: impl Into<Bytes>) -> anyhow::Result<HttpRequest> {
-        let uri: Uri = self.uri_string.unwrap().parse()?;
-        let body = Full::from(body.into()).map_err(|e| match e {}).boxed();
-        let request = self.builder.uri(&uri).header("Host", uri.host().unwrap()).body(body)?;
-        Ok(HttpRequest::from(request))
-    }
+    pub fn build(self) -> anyhow::Result<HttpRequest> {
+        let request: Request<BoxBody<Bytes, Error>>;
 
-    /// Finish the builder and the create the request with a body of bytes as a stream.
-    pub fn body_stream(self, stream: ByteStream) -> anyhow::Result<HttpRequest> {
-        let uri: Uri = self.uri_string.unwrap().parse()?;
-        let mapped_stream = stream.inner_stream().map(|res| { res.map(Frame::data) });
-        let body = StreamBody::new(mapped_stream);
-        let boxed_body: BoxBody<Bytes, anyhow::Error> = BodyExt::boxed(body);
-        let request: Request<BoxBody<Bytes, Error>> = self.builder.uri(&uri).header("Host", uri.host().unwrap()).body(boxed_body)?;
+        if let Some(body) = self.body {
+            let uri: Uri = self.uri_string.unwrap().parse()?;
+            let mapped_stream = body.inner_stream().map(|res| { res.map(Frame::data) });
+            let body = StreamBody::new(mapped_stream);
+            let boxed_body: BoxBody<Bytes, anyhow::Error> = BodyExt::boxed(body);
+            request = self.builder.uri(&uri).header("Host", uri.host().unwrap()).body(boxed_body)?;
+        } else {
+            let uri: Uri = self.uri_string.unwrap().parse()?;
+            let body = Empty::new().map_err(|e| match e {}).boxed();
+            request = self.builder.uri(&uri).header("Host", uri.host().unwrap()).body(body)?;
+        }
+
         Ok(HttpRequest::from(request))
     }
 
     /// Add a header to the request.
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.builder = self.builder.header(key.into(), value.into());
+    pub fn header(mut self, key: impl AsRef<str>, value: impl AsRef<[u8]>) -> Self {
+        self.builder = self.builder.header(key.as_ref(), value.as_ref());
         self
     }
 
     /// Copy headers from another request or response.
-    pub fn headers(mut self, headers: &HeaderMap) -> Self {
+    pub fn headers<I, K, V>(mut self, headers: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<[u8]>,
+    {
         for (key, value) in headers {
-            self.builder = self.builder.header(key, value);
+            self.builder = self.builder.header(key.as_ref(), value.as_ref());
         }
         self
     }
