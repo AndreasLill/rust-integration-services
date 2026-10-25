@@ -1,4 +1,4 @@
-use std::{convert::Infallible, pin::Pin, sync::Arc};
+use std::{convert::Infallible, marker::PhantomData, pin::Pin, sync::Arc};
 
 use futures::FutureExt;
 use http_body_util::{BodyExt, combinators::BoxBody};
@@ -24,14 +24,8 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn builder(config: HttpServerConfig) -> HttpServerBuilder {
-        HttpServerBuilder {
-            config,
-            router: Router::new(),
-            before: Vec::new(),
-            after: Vec::new(),
-            on_error: None,
-        }
+    pub fn builder(config: HttpServerConfig) -> HttpServerBuilder<Before> {
+        HttpServerBuilder::new(config)
     }
 
     /// Run the HTTP server and begins listening for incoming TCP connections (optionally over TLS).
@@ -236,15 +230,32 @@ impl From<HttpResponse> for BeforeResult {
     }
 }
 
-pub struct HttpServerBuilder {
+pub struct Before;
+pub struct Route;
+pub struct After;
+pub struct OnError;
+
+pub struct HttpServerBuilder<State> {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
     before: Vec<BeforeCallback>,
     after: Vec<AfterCallback>,
     on_error: Option<ErrorCallback>,
+    _state: PhantomData<State>
 }
 
-impl HttpServerBuilder {
+impl HttpServerBuilder<Before> {
+    pub fn new(config: HttpServerConfig) -> Self {
+        Self {
+            config: config,
+            router: Router::new(),
+            before: Vec::new(),
+            after: Vec::new(),
+            on_error: None,
+            _state: PhantomData
+        }
+    }
+
     /// Add a middleware to the request pipeline.
     ///
     /// - Return `HttpRequest` to continue to the next middleware or route handler
@@ -268,6 +279,25 @@ impl HttpServerBuilder {
     }
 
     /// Registers a route with a path, associating it with a handler callback.
+    pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> HttpServerBuilder<Route>
+    where
+        T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HttpResponse> + Send + 'static,
+    {
+        self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
+        HttpServerBuilder {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            after: self.after,
+            on_error: self.on_error,
+            _state: PhantomData
+        }
+    }
+}
+
+impl HttpServerBuilder<Route> {
+    /// Registers a route with a path, associating it with a handler callback.
     pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> Self
     where
         T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
@@ -282,13 +312,20 @@ impl HttpServerBuilder {
     /// This middleware runs after a response is produced and can modify the response before it is sent to the client.
     /// 
     /// It does not affect request execution flow.
-    pub fn after<T, Fut>(mut self, callback: T) -> Self
+    pub fn after<T, Fut>(mut self, callback: T) -> HttpServerBuilder<After>
     where 
         T: Fn(HttpResponse) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
         self.after.push(Arc::new(move |response| Box::pin(callback(response))));
-        self
+        HttpServerBuilder {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            after: self.after,
+            on_error: self.on_error,
+            _state: PhantomData
+        }
     }
 
     /// Registers a global error handler for the HTTP server.
@@ -296,15 +333,46 @@ impl HttpServerBuilder {
     /// The handler receives an error string and return `HttpResponse` to allow full control over how errors are translated into a response.
     /// 
     /// Only one error handler is supported, and registering multiple will overwrite the previous one.
-    pub fn on_error<T, Fut>(mut self, callback: T) -> Self
+    pub fn on_error<T, Fut>(mut self, callback: T) -> HttpServerBuilder<OnError>
     where 
         T: Fn(String) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HttpResponse> + Send + 'static,
     {
         self.on_error = Some(Arc::new(move |err| Box::pin(callback(err))));
-        self
+        HttpServerBuilder {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            after: self.after,
+            on_error: self.on_error,
+            _state: PhantomData
+        }
     }
 
+    pub fn build(self) -> HttpServer {
+        HttpServer {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            on_error: self.on_error,
+            after: self.after
+        }
+    }
+}
+
+impl HttpServerBuilder<After> {
+    pub fn build(self) -> HttpServer {
+        HttpServer {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            on_error: self.on_error,
+            after: self.after
+        }
+    }
+}
+
+impl HttpServerBuilder<OnError> {
     pub fn build(self) -> HttpServer {
         HttpServer {
             config: self.config,
