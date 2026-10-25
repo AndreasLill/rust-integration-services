@@ -166,15 +166,17 @@ impl HttpServer {
         match router.at(&path) {
             Ok(matched) => {
                 let params: Vec<(String, String)> = matched.params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-
                 let body = body.map_err(anyhow::Error::from);
                 let mut req = HttpRequest::from_parts_with_params(body.boxed(), parts, params);
 
+                // Check if a "before" middleware is registered and loop through them.
                 for handler in before.iter() {
                     match handler(req).await {
+                        // Chain next "before" middleware
                         BeforeResult::Next(request) => {
                             req = request;
                         },
+                        // Break the chain early if a response is returned in a "before" middleware
                         BeforeResult::Response(response) => {
                             let mut response = response;
 
@@ -197,6 +199,30 @@ impl HttpServer {
                 Ok(Response::from(response))
             },
             Err(_) => {
+                let body = body.map_err(anyhow::Error::from);
+                let mut req = HttpRequest::from_parts(body.boxed(), parts);
+
+                // Check if a "before" middleware is registered and loop through them.
+                for handler in before.iter() {
+                    match handler(req).await {
+                        // Chain next "before" middleware
+                        BeforeResult::Next(request) => {
+                            req = request;
+                        },
+                        // Break the chain early if a response is returned in a "before" middleware
+                        BeforeResult::Response(response) => {
+                            let mut response = response;
+
+                            for handler in after.iter() {
+                                response = handler(response).await;
+                            }
+
+                            return Ok(Response::from(response))
+                        },
+                    }
+                }
+
+                // Return 404 if route was not found.
                 let response = HttpResponse::builder().status(404).build().unwrap();
                 Ok(Response::from(response))
             },
@@ -361,6 +387,27 @@ impl HttpServerBuilder<Route> {
 }
 
 impl HttpServerBuilder<After> {
+    /// Registers a global error handler for the HTTP server.
+    /// 
+    /// The handler receives an error string and return `HttpResponse` to allow full control over how errors are translated into a response.
+    /// 
+    /// Only one error handler is supported, and registering multiple will overwrite the previous one.
+    pub fn on_error<T, Fut>(mut self, callback: T) -> HttpServerBuilder<OnError>
+    where 
+        T: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HttpResponse> + Send + 'static,
+    {
+        self.on_error = Some(Arc::new(move |err| Box::pin(callback(err))));
+        HttpServerBuilder {
+            config: self.config,
+            router: self.router,
+            before: self.before,
+            after: self.after,
+            on_error: self.on_error,
+            _state: PhantomData
+        }
+    }
+    
     pub fn build(self) -> HttpServer {
         HttpServer {
             config: self.config,
