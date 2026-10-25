@@ -9,8 +9,16 @@ async fn http_server_client() {
     tokio::spawn(async move {
         let config = HttpServerConfig::builder().host("127.0.0.1").port(8080).build().unwrap();
         HttpServer::builder(config)
+        .request_middleware(|req| async {
+            tracing::info!(?req);
+            Ok(req)
+        })
         .route("/", async move |_| {
             HttpResponse::builder().status(200).build().unwrap()
+        })
+        .response_middleware(|res| async {
+            tracing::info!(?res);
+            res
         })
         .build()
         .run()
