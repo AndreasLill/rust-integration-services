@@ -1,6 +1,5 @@
 use std::{convert::Infallible, marker::PhantomData, pin::Pin, sync::Arc};
 
-use futures::FutureExt;
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{Request, Response, body::{Bytes, Incoming}, service::service_fn};
 use hyper_util::rt::TokioIo;
@@ -10,17 +9,16 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::http::{executor::Executor, http_request::HttpRequest, http_response::HttpResponse, server::http_server_config::HttpServerConfig};
 
-type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type HttpServerError = anyhow::Error;
+type RouteCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpServerError>> + Send>> + Send + Sync>;
 type RequestMiddlewareCallback = Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = Result<HttpRequest, HttpResponse>> + Send>> + Send + Sync>;
-type ResponseMiddlewareCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output =HttpResponse > + Send>> + Send + Sync>;
-type ErrorCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
+type ResponseMiddlewareCallback = Arc<dyn Fn(HttpResponse) -> Pin<Box<dyn Future<Output = Result<HttpResponse, HttpServerError>> + Send>> + Send + Sync>;
 
 pub struct HttpServer {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
     request_middleware: Vec<RequestMiddlewareCallback>,
-    response_middleware: Vec<ResponseMiddlewareCallback>,
-    on_error: Option<ErrorCallback>,
+    response_middleware: Vec<ResponseMiddlewareCallback>
 }
 
 impl HttpServer {
@@ -44,7 +42,6 @@ impl HttpServer {
         let router = Arc::new(self.router);
         let request_middleware: Arc<[RequestMiddlewareCallback]> = self.request_middleware.into();
         let response_middleware: Arc<[ResponseMiddlewareCallback]> = self.response_middleware.into();
-        let on_error = self.on_error;
         
         tracing::trace!("Started on {}", &host);
         loop {
@@ -62,7 +59,7 @@ impl HttpServer {
                     let router = router.clone();
                     let request_middleware = request_middleware.clone();
                     let response_middleware = response_middleware.clone();
-                    let on_error = on_error.clone();
+
                     let (tcp_stream, _client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
@@ -73,10 +70,10 @@ impl HttpServer {
 
                     match tls_acceptor {
                         Some(acceptor) => {
-                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router, request_middleware, response_middleware, on_error));
+                            tokio::spawn(Self::tls_connection(acceptor, tcp_stream, router, request_middleware, response_middleware));
                         },
                         None => {
-                            tokio::spawn(Self::tcp_connection(tcp_stream, router, request_middleware, response_middleware, on_error));
+                            tokio::spawn(Self::tcp_connection(tcp_stream, router, request_middleware, response_middleware));
                         },
                     }
                 }
@@ -86,11 +83,11 @@ impl HttpServer {
         tracing::trace!("Shut down complete");
     }
 
-    async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>, on_error: Option<ErrorCallback>) {
+    async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>) {
         let service = {
             let router = router.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, router.clone(), request_middleware.clone(), response_middleware.clone(), on_error.clone())
+                Self::incoming_request(req, router.clone(), request_middleware.clone(), response_middleware.clone())
             })
         };
         
@@ -100,7 +97,7 @@ impl HttpServer {
         }
     }
 
-    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>, on_error: Option<ErrorCallback>) {
+    async fn tls_connection(tls_acceptor: TlsAcceptor, tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>) {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
@@ -112,7 +109,7 @@ impl HttpServer {
         let service = {
             let router = router.clone();
             service_fn(move |req| {
-                Self::incoming_request(req, router.clone(), request_middleware.clone(), response_middleware.clone(), on_error.clone())
+                Self::incoming_request(req, router.clone(), request_middleware.clone(), response_middleware.clone())
             })
         };
         
@@ -132,35 +129,7 @@ impl HttpServer {
         }
     }
 
-    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>, on_error: Option<ErrorCallback>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
-        let result = std::panic::AssertUnwindSafe(Self::inner_request(request, router, request_middleware, response_middleware)).catch_unwind().await;
-        match result {
-            Ok(response) => response,
-            Err(err) => {
-                let error = if let Some(s) = err.downcast_ref::<String>() {
-                    s.as_str()
-                } else if let Some(s) = err.downcast_ref::<&str>() {
-                    s
-                } else {
-                    "Unknown panic!"
-                };
-
-                let response = match on_error {
-                    Some(handler) => {
-                        handler(error.to_string()).await
-                    },
-                    None => {
-                        tracing::error!("{:?}", error);
-                        HttpResponse::builder().status(500).build().unwrap()
-                    },
-                };
-
-                Ok(Response::from(response))
-            }
-        }
-    }
-
-    async fn inner_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
+    async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
         let (parts, body) = request.into_parts();
         let path = parts.uri.path().to_owned();
         match router.at(&path) {
@@ -176,7 +145,13 @@ impl HttpServer {
                         Err(mut response) => {
                             // Response middlewares
                             for handler in response_middleware.iter() {
-                                response = handler(response).await;
+                                match handler(response).await {
+                                    Ok(res) => response = res,
+                                    Err(err) => {
+                                        tracing::trace!(?err, "Error in request middleware");
+                                        return Ok(Response::from(HttpResponse::builder().status(500).build().unwrap()))
+                                    },
+                                }
                             }
 
                             return Ok(Response::from(response))
@@ -185,13 +160,39 @@ impl HttpServer {
                 }
 
                 let callback = matched.value;
-                let mut response = callback(req).await;
+                let response = callback(req).await;
 
-                for handler in response_middleware.iter() {
-                    response = handler(response).await;
+                match response {
+                    Ok(mut response) => {
+                        for handler in response_middleware.iter() {
+                                match handler(response).await {
+                                    Ok(res) => response = res,
+                                    Err(err) => {
+                                        tracing::trace!(?err, "Error in response middleware");
+                                        return Ok(Response::from(HttpResponse::builder().status(500).build().unwrap()))
+                                    },
+                                }
+                            }
+
+                        Ok(Response::from(response))
+                    },
+                    Err(err) => {
+                        tracing::trace!(?err, "Error in route response");
+                        let mut response = HttpResponse::builder().status(500).build().unwrap();
+
+                        for handler in response_middleware.iter() {
+                                match handler(response).await {
+                                    Ok(res) => response = res,
+                                    Err(err) => {
+                                        tracing::trace!(?err, "Error in response middleware");
+                                        return Ok(Response::from(HttpResponse::builder().status(500).build().unwrap()))
+                                    },
+                                }
+                            }
+
+                        Ok(Response::from(response))
+                    },
                 }
-
-                Ok(Response::from(response))
             },
             Err(_) => {
                 let body = body.map_err(anyhow::Error::from);
@@ -204,7 +205,13 @@ impl HttpServer {
                         Err(mut response) => {
                             // Response middlewares
                             for handler in response_middleware.iter() {
-                                response = handler(response).await;
+                                match handler(response).await {
+                                    Ok(res) => response = res,
+                                    Err(err) => {
+                                        tracing::trace!(?err, "Error in request middleware on 404 path");
+                                        return Ok(Response::from(HttpResponse::builder().status(500).build().unwrap()))
+                                    },
+                                }
                             }
 
                             return Ok(Response::from(response))
@@ -216,7 +223,13 @@ impl HttpServer {
                 let mut response = HttpResponse::builder().status(404).build().unwrap();
 
                 for handler in response_middleware.iter() {
-                    response = handler(response).await;
+                    match handler(response).await {
+                        Ok(res) => response = res,
+                        Err(err) => {
+                            tracing::trace!(?err, "Error in response middleware on 404 path");
+                            return Ok(Response::from(HttpResponse::builder().status(500).build().unwrap()))
+                        },
+                    }
                 }
 
                 Ok(Response::from(response))
@@ -228,14 +241,12 @@ impl HttpServer {
 pub struct Before;
 pub struct Route;
 pub struct After;
-pub struct OnError;
 
 pub struct HttpServerBuilder<State> {
     config: HttpServerConfig,
     router: Router<RouteCallback>,
     request_middleware: Vec<RequestMiddlewareCallback>,
     response_middleware: Vec<ResponseMiddlewareCallback>,
-    on_error: Option<ErrorCallback>,
     _state: PhantomData<State>
 }
 
@@ -246,7 +257,6 @@ impl HttpServerBuilder<Before> {
             router: Router::new(),
             request_middleware: Vec::new(),
             response_middleware: Vec::new(),
-            on_error: None,
             _state: PhantomData
         }
     }
@@ -276,7 +286,7 @@ impl HttpServerBuilder<Before> {
     pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> HttpServerBuilder<Route>
     where
         T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse> + Send + 'static,
+        Fut: Future<Output = Result<HttpResponse, HttpServerError>> + Send + 'static,
     {
         self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
         HttpServerBuilder {
@@ -284,7 +294,6 @@ impl HttpServerBuilder<Before> {
             router: self.router,
             request_middleware: self.request_middleware,
             response_middleware: self.response_middleware,
-            on_error: self.on_error,
             _state: PhantomData
         }
     }
@@ -295,7 +304,7 @@ impl HttpServerBuilder<Route> {
     pub fn route<T, Fut>(mut self, path: impl Into<String>, callback: T) -> Self
     where
         T: Fn(HttpRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse> + Send + 'static,
+        Fut: Future<Output = Result<HttpResponse, HttpServerError>> + Send + 'static,
     {
         self.router.insert(path.into(), Arc::new(move |request| Box::pin(callback(request)))).unwrap();
         self
@@ -309,7 +318,7 @@ impl HttpServerBuilder<Route> {
     pub fn response_middleware<T, Fut>(mut self, callback: T) -> HttpServerBuilder<After>
     where 
         T: Fn(HttpResponse) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse> + Send + 'static,
+        Fut: Future<Output = Result<HttpResponse, HttpServerError>> + Send + 'static,
     {
         self.response_middleware.push(Arc::new(move |response| Box::pin(callback(response))));
         HttpServerBuilder {
@@ -317,28 +326,6 @@ impl HttpServerBuilder<Route> {
             router: self.router,
             request_middleware: self.request_middleware,
             response_middleware: self.response_middleware,
-            on_error: self.on_error,
-            _state: PhantomData
-        }
-    }
-
-    /// Registers a global error handler for the HTTP server.
-    /// 
-    /// The handler receives an error string and return `HttpResponse` to allow full control over how errors are translated into a response.
-    /// 
-    /// Only one error handler is supported, and registering multiple will overwrite the previous one.
-    pub fn on_error<T, Fut>(mut self, callback: T) -> HttpServerBuilder<OnError>
-    where 
-        T: Fn(String) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse> + Send + 'static,
-    {
-        self.on_error = Some(Arc::new(move |err| Box::pin(callback(err))));
-        HttpServerBuilder {
-            config: self.config,
-            router: self.router,
-            request_middleware: self.request_middleware,
-            response_middleware: self.response_middleware,
-            on_error: self.on_error,
             _state: PhantomData
         }
     }
@@ -348,52 +335,17 @@ impl HttpServerBuilder<Route> {
             config: self.config,
             router: self.router,
             request_middleware: self.request_middleware,
-            on_error: self.on_error,
             response_middleware: self.response_middleware
         }
     }
 }
 
 impl HttpServerBuilder<After> {
-    /// Registers a global error handler for the HTTP server.
-    /// 
-    /// The handler receives an error string and return `HttpResponse` to allow full control over how errors are translated into a response.
-    /// 
-    /// Only one error handler is supported, and registering multiple will overwrite the previous one.
-    pub fn on_error<T, Fut>(mut self, callback: T) -> HttpServerBuilder<OnError>
-    where 
-        T: Fn(String) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HttpResponse> + Send + 'static,
-    {
-        self.on_error = Some(Arc::new(move |err| Box::pin(callback(err))));
-        HttpServerBuilder {
-            config: self.config,
-            router: self.router,
-            request_middleware: self.request_middleware,
-            response_middleware: self.response_middleware,
-            on_error: self.on_error,
-            _state: PhantomData
-        }
-    }
-    
     pub fn build(self) -> HttpServer {
         HttpServer {
             config: self.config,
             router: self.router,
             request_middleware: self.request_middleware,
-            on_error: self.on_error,
-            response_middleware: self.response_middleware
-        }
-    }
-}
-
-impl HttpServerBuilder<OnError> {
-    pub fn build(self) -> HttpServer {
-        HttpServer {
-            config: self.config,
-            router: self.router,
-            request_middleware: self.request_middleware,
-            on_error: self.on_error,
             response_middleware: self.response_middleware
         }
     }
