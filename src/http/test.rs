@@ -9,8 +9,16 @@ async fn http_server_client() {
     tokio::spawn(async move {
         let config = HttpServerConfig::builder().host("127.0.0.1").port(8080).build().unwrap();
         HttpServer::builder(config)
+        .request_middleware(|req| async {
+            tracing::info!(?req);
+            Ok(req)
+        })
         .route("/", async move |_| {
-            HttpResponse::builder().status(200).build().unwrap()
+            Ok(HttpResponse::builder().status(200).build().unwrap())
+        })
+        .response_middleware(|res| async {
+            tracing::info!(?res);
+            Ok(res)
         })
         .build()
         .run()
@@ -42,7 +50,7 @@ async fn http_server_client_tls() {
         let config = HttpServerConfig::builder().host("127.0.0.1").port(8080).tls(server_cert_path, server_key_path).build().unwrap();
         HttpServer::builder(config)
         .route("/", async move |_req| {
-            HttpResponse::builder().status(200).build().unwrap()
+            Ok(HttpResponse::builder().status(200).build().unwrap())
         })
         .build()
         .run()
