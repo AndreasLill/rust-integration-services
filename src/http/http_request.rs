@@ -19,7 +19,8 @@ pub struct Method;
 pub struct HttpRequest {
     body: BoxBody<Bytes, Error>,
     parts: hyper::http::request::Parts,
-    params: Vec<(String, String)>,
+    path_params: Vec<(String, String)>,
+    query_params: Vec<(String, String)>,
 }
 
 impl HttpRequest {
@@ -34,16 +35,18 @@ impl HttpRequest {
         HttpRequest {
             body,
             parts,
-            params: Vec::new()
+            path_params: Vec::new(),
+            query_params: Vec::new()
         }
     }
 
     /// Create a new request from hyper parts with params.
-    pub fn from_parts_with_params(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts, params: Vec<(String, String)>) -> HttpRequest {
+    pub fn from_parts_with_params(body: BoxBody<Bytes, Error>, parts: hyper::http::request::Parts, path_params: Vec<(String, String)>, query_params: Vec<(String, String)>) -> HttpRequest {
         HttpRequest {
             body,
             parts,
-            params
+            path_params,
+            query_params
         }
     }
 
@@ -97,14 +100,24 @@ impl HttpRequest {
         self.parts.headers.iter().map(|(key, value)| {(key.as_str(), value.as_bytes())})
     }
 
-    // Returns a param by key.
-    pub fn param(&self, key: impl AsRef<str>) -> Option<&str> {
-        self.params.iter().find(|(k, _)| k == key.as_ref()).map(|(_, v)| v.as_str())
+    /// Returns a path param by key.
+    pub fn path_param(&self, key: impl AsRef<str>) -> Option<&str> {
+        self.path_params.iter().find(|(k, _)| k == key.as_ref()).map(|(_, v)| v.as_str())
     }
 
-    /// Returns an iterator with request params.
-    pub fn params(&self) -> impl Iterator<Item = (&str, &str)>  {
-        self.params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    /// Returns an iterator with request path params.
+    pub fn path_params(&self) -> impl Iterator<Item = (&str, &str)>  {
+        self.path_params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// Returns a query param by key.
+    pub fn query_param(&self, key: impl AsRef<str>) -> Option<&str> {
+        self.query_params.iter().find(|(k, _)| k == key.as_ref()).map(|(_, v)| v.as_str())
+    }
+
+    /// Returns an iterator with request query params.
+    pub fn query_params(&self) -> impl Iterator<Item = (&str, &str)>  {
+        self.query_params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 }
 
