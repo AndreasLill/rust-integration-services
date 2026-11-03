@@ -2761,7 +2761,7 @@ dependencies = [
 
 [[package]]
 name = "rust-integration-services"
-version = "0.5.40"
+version = "0.5.41"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -2769,6 +2769,7 @@ dependencies = [
  "bytes",
  "chrono",
  "croner",
+ "form_urlencoded",
  "futures",
  "http-body 1.1.0",
  "http-body-util",
@@ -2789,7 +2790,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "url",
  "webpki-roots",
 ]
 

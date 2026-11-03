@@ -6,7 +6,6 @@ use hyper_util::rt::TokioIo;
 use matchit::Router;
 use tokio::{net::{TcpListener, TcpStream}, signal::unix::{signal, SignalKind}};
 use tokio_rustls::TlsAcceptor;
-use url::Url;
 
 use crate::http::{executor::Executor, http_request::HttpRequest, http_response::HttpResponse, server::{http_server_builder::{Before, HttpServerBuilder}, http_server_config::HttpServerConfig}};
 
@@ -146,10 +145,9 @@ impl HttpServer {
         match router.at(&path) {
             Ok(matched) => {
                 // Matched route with path
-                let Ok(url) = Url::parse(&parts.uri.to_string()) else {
-                    return Ok(Response::from(HttpResponse::builder().status(500).build().unwrap()));
-                };
-                let query_params: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+                let query_params: Vec<(String, String)> = parts.uri.query().map(|query| {
+                    form_urlencoded::parse(query.as_bytes()).map(|(key, value)| (key.into_owned(), value.into_owned())).collect()
+                }).unwrap_or_default();
                 let path_params: Vec<(String, String)> = matched.params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
                 let body = body.map_err(anyhow::Error::from);
                 let request = HttpRequest::from_parts_with_params(body.boxed(), parts, path_params, query_params);
