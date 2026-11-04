@@ -1,23 +1,23 @@
 use std::{env::home_dir, time::Duration};
 
+use tracing::level_filters::LevelFilter;
+
 use crate::http::{client::http_client::HttpClient, http_request::HttpRequest, http_response::HttpResponse, server::{http_server::{HttpServer}, http_server_config::HttpServerConfig}};
 
 #[tokio::test(start_paused = true)]
 #[ignore = "manual integration test for both http server and http client"]
 async fn http_server_client() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
     tokio::spawn(async move {
         let config = HttpServerConfig::builder().host("127.0.0.1").port(8080).build().unwrap();
         HttpServer::builder(config)
         .request_middleware(|req| async {
-            tracing::info!(?req);
             Ok(req)
         })
         .route("/", async move |_| {
             Ok(HttpResponse::builder().status(200).build().unwrap())
         })
         .response_middleware(|res| async {
-            tracing::info!(?res);
             Ok(res)
         })
         .build()
@@ -31,7 +31,6 @@ async fn http_server_client() {
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    tracing::info!(?response);
     assert_eq!(response.status(), 200);
 }
 
@@ -42,7 +41,7 @@ async fn http_server_client() {
 #[tokio::test(start_paused = true)]
 #[ignore = "manual integration test for both http server and http client over TLS, requires server certs"]
 async fn http_server_client_tls() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
     tokio::spawn(async move {
         let server_cert_path = home_dir().unwrap().join("server.pem");
         let server_key_path = home_dir().unwrap().join("server-key.pem");
@@ -63,7 +62,6 @@ async fn http_server_client_tls() {
     assert!(result.is_ok());
     
     let response = result.unwrap();
-    tracing::info!(?response);
     assert_eq!(response.status(), 200);
 }
 

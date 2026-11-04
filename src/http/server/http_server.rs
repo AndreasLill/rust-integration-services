@@ -52,7 +52,7 @@ impl HttpServer {
         let request_middleware: Arc<[RequestMiddlewareCallback]> = self.request_middleware.into();
         let response_middleware: Arc<[ResponseMiddlewareCallback]> = self.response_middleware.into();
         
-        tracing::trace!("Started on {}", &host);
+        tracing::debug!(host = %host, tls_enabled = %tls_acceptor.is_some(), "HTTP server starting");
         loop {
             tokio::select! {
                 _ = sigterm.recv() => {
@@ -72,7 +72,7 @@ impl HttpServer {
                     let (tcp_stream, _client_addr) = match result {
                         Ok(pair) => pair,
                         Err(err) => {
-                            tracing::error!("{:?}", err);
+                            tracing::error!(error = %err, "Failed to accept connection");
                             continue;
                         },
                     };
@@ -89,7 +89,7 @@ impl HttpServer {
             }
         }
 
-        tracing::trace!("Shut down complete");
+        tracing::debug!("HTTP server shut down");
     }
 
     async fn tcp_connection(tcp_stream: TcpStream, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>) {
@@ -102,7 +102,7 @@ impl HttpServer {
         
         let io = TokioIo::new(tcp_stream);
         if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
-            tracing::error!("{:?}", err);
+            tracing::error!(error = %err, "HTTP/1.1 connection error");
         }
     }
 
@@ -110,7 +110,7 @@ impl HttpServer {
         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
             Ok(stream) => stream,
             Err(err) => {
-                tracing::error!("TLS handshake failed {:?}", err);
+                tracing::error!(error = %err, "TLS handshake failed");
                 return;
             },
         };
@@ -127,12 +127,12 @@ impl HttpServer {
         match protocol {
             Some(b"h2") => {
                 if let Err(err) = hyper::server::conn::http2::Builder::new(Executor).serve_connection(io, service).await {
-                    tracing::error!("TLS handshake failed {:?}", err);
+                    tracing::error!(error = %err, "HTTP/2 connection error");
                 }
             }
             _ => {
                 if let Err(err) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
-                    tracing::error!("{:?}", err);
+                    tracing::error!(error = %err, "HTTP/1.1 connection error");
                 }
             }
         }
@@ -141,6 +141,8 @@ impl HttpServer {
     async fn incoming_request(request: Request<Incoming>, router: Arc<Router<RouteCallback>>, request_middleware: Arc<[RequestMiddlewareCallback]>, response_middleware: Arc<[ResponseMiddlewareCallback]>) -> Result<Response<BoxBody<Bytes, anyhow::Error>>, Infallible> {
         let (parts, body) = request.into_parts();
         let path = parts.uri.path().to_owned();
+        let method = parts.method.as_str().to_owned();
+        tracing::debug!(method = %method, path = %path, "Request");
 
         match router.at(&path) {
             Ok(matched) => {
@@ -153,6 +155,7 @@ impl HttpServer {
                 let request = HttpRequest::from_parts_with_params(body.boxed(), parts, path_params, query_params);
                 let response = Self::route_matched(request, request_middleware, response_middleware, matched.value).await;
 
+                tracing::debug!(method = %method, path = %path, code = ?response.status(), "Response");
                 Ok(Response::from(response))
             },
             Err(_) => {
@@ -161,6 +164,7 @@ impl HttpServer {
                 let request = HttpRequest::from_parts(body.boxed(), parts);
                 let response = Self::route_not_found(request, request_middleware, response_middleware).await;
 
+                tracing::debug!(method = %method, path = %path, code = ?response.status(), "Response");
                 Ok(Response::from(response))
             },
         }
@@ -183,10 +187,7 @@ impl HttpServer {
                 // Response middlewares before route response
                 response = match Self::run_response_middleware(response, response_middleware).await {
                     Ok(res) => res,
-                    Err(err) => {
-                        tracing::trace!(?err, "Error in response middleware");
-                        return HttpResponse::builder().status(500).build().unwrap()
-                    },
+                    Err(_) => return HttpResponse::builder().status(500).build().unwrap(),
                 };
 
                 // Everything went OK
@@ -199,10 +200,7 @@ impl HttpServer {
                 // Response middlewares before route error response
                 response = match Self::run_response_middleware(response, response_middleware).await {
                     Ok(res) => res,
-                    Err(err) => {
-                        tracing::trace!(?err, "Error in response middleware");
-                        return HttpResponse::builder().status(500).build().unwrap()
-                    },
+                    Err(_) => return HttpResponse::builder().status(500).build().unwrap(),
                 };
 
                 // Route error response
@@ -226,10 +224,7 @@ impl HttpServer {
         // Response middlewares before route response on 404 path
         response = match Self::run_response_middleware(response, response_middleware).await {
             Ok(res) => res,
-            Err(err) => {
-                tracing::trace!(?err, "Error in response middleware on 404 path");
-                return HttpResponse::builder().status(500).build().unwrap()
-            },
+            Err(_) => return HttpResponse::builder().status(500).build().unwrap(),
         };
 
         response
@@ -243,10 +238,7 @@ impl HttpServer {
                     // Response middlewares in case of error in request middlewares
                     response = match Self::run_response_middleware(response, response_middleware).await {
                         Ok(res) => res,
-                        Err(err) => {
-                            tracing::trace!(?err, "Error in response middleware inside request middleware error response");
-                            return Err(HttpResponse::builder().status(500).build().unwrap())
-                        },
+                        Err(_) => return Err(HttpResponse::builder().status(500).build().unwrap()),
                     };
 
                     return Err(response)
@@ -261,7 +253,10 @@ impl HttpServer {
         for handler in response_middleware.iter() {
             match handler(response).await {
                 Ok(res) => response = res,
-                Err(err) => return Err(err),
+                Err(err) => {
+                    tracing::error!(error = %err, "Error in response middleware");
+                    return Err(err)
+                },
             }
         }
 
